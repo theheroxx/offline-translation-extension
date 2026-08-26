@@ -1,3 +1,5 @@
+
+// pub mod input_module {
 pub struct Input {
     pub x1: f32,
     pub x2: f32,
@@ -59,3 +61,4 @@ pub fn minmax_normalize(input: &Input) -> Input {
         x4: (input.x4 - min_val) / range,
     }
 }
+// }
