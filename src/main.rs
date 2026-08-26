@@ -6,9 +6,46 @@ fn relu(x: f32) -> f32 {
     x.max(0.0)
 }
 
+
 fn apply_relu(values: &[f32]) -> Vec<f32> {
     values.iter().map(|&x| relu(x)).collect()
 }
+
+
+fn gelu(x: f32) -> f32 {
+    let sqrt_2_over_pi = (2.0 / std::f32::consts::PI).sqrt();
+
+    0.5 * x
+        * (1.0
+            + (sqrt_2_over_pi * (x + 0.044715 * x.powi(3))).tanh())
+}
+
+fn apply_gelu(values: &[f32]) -> Vec<f32> {
+    values.iter()
+        .map(|&x| gelu(x))
+        .collect()
+}
+
+
+fn softmax(logits: &[f32]) -> Vec<f32> {
+    let max = logits
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    let exp_values: Vec<f32> = logits
+        .iter()
+        .map(|&x| (x - max).exp())
+        .collect();
+
+    let sum: f32 = exp_values.iter().sum();
+
+    exp_values
+        .iter()
+        .map(|&x| x / sum)
+        .collect()
+}
+
 
 fn matrix_mul(a: &[Vec<f32>], b: &[Vec<f32>]) -> Vec<Vec<f32>> {
     assert!(!a.is_empty(), "Matrix A cannot be empty");
@@ -112,6 +149,7 @@ fn cross_entropy_loss(y: &Labels, y_pred: &[f32]) -> f32 {
 
 mod gradient {
     use crate::input_module::Labels;
+    use crate::softmax;
 
     pub fn loss_gradient(y: &Labels, y_pred: &[f32]) -> Vec<f32> {
         let y_vec = y.to_vec();
@@ -131,32 +169,67 @@ mod gradient {
             .collect()
     }
 
-    pub fn cross_entropy_loss_grad(y: &Labels, y_pred: &[f32]) -> Vec<f32> {
-        let y_vec = y.to_vec();
-
-        assert_eq!(
-            y_vec.len(),
-            y_pred.len(),
-            "Labels and predictions must have the same length"
+    pub fn softmax_cross_entropy_grad(
+        probabilities: &[f32],
+        target_index: usize,
+    ) -> Vec<f32> {
+        assert!(
+            target_index < probabilities.len(),
+            "Target index is outside vocabulary"
         );
 
-        let n = y_vec.len() as f32;
-        let epsilon = 1e-7;
+        let mut gradient = probabilities.to_vec();
 
-        y_vec
-            .iter()
-            .zip(y_pred.iter())
-            .map(|(&target, &prediction)| {
-                let pred = prediction.clamp(epsilon, 1.0 - epsilon);
-                (pred - target) / (pred * (1.0 - pred) * n)
-            })
-            .collect()
+        gradient[target_index] -= 1.0;
+
+        gradient
     }
 
     pub fn relu_gradient(x: f32) -> f32 {
         if x > 0.0 { 1.0 } else { 0.0 }
     }
+
+    pub fn gelu_gradient(x: f32) -> f32 {
+        let c = (2.0 / std::f32::consts::PI).sqrt();
+        let k = 0.044715;
+
+        let inner = c * (x + k * x.powi(3));
+        let tanh_inner = inner.tanh();
+
+        let sech2 = 1.0 - tanh_inner.powi(2);
+
+        0.5 * (1.0 + tanh_inner)
+            + 0.5
+                * x
+                * sech2
+                * c
+                * (1.0 + 3.0 * k * x.powi(2))
+    }
+
+
+    pub fn softmax_gradient(logits: &[f32]) -> Vec<Vec<f32>> {
+    let probabilities = softmax(logits);
+    let n = probabilities.len();
+
+    let mut jacobian = vec![vec![0.0; n]; n];
+
+    for i in 0..n {
+        for j in 0..n {
+            if i == j {
+                jacobian[i][j] =
+                    probabilities[i] * (1.0 - probabilities[j]);
+            } else {
+                jacobian[i][j] =
+                    -probabilities[i] * probabilities[j];
+            }
+        }
+    }
+
+    jacobian
 }
+}
+
+
 
 struct Gradients {
     d_weights: Vec<Vec<f32>>,
