@@ -1,25 +1,39 @@
-mod input_module;
-mod activations;
-mod losses;
-mod matrix;
-mod gradients;
-mod model;
+mod FFN;
+mod Tokenizer;
 
-use input_module::{Input, Labels, normalize_input, minmax_normalize};
-use activations::{relu, gelu, apply_relu, apply_gelu, softmax};
-use model::{forward,backward};
-use losses::{mse_loss, cross_entropy_loss};
-use gradients::{relu_gradient, gelu_gradient,loss_gradient,softmax_cross_entropy_grad,softmax_gradient};
-
+use Tokenizer::load_dataset;
+use FFN::input_module::{Input, Labels, normalize_input, minmax_normalize};
+use FFN::activations::{relu, gelu, apply_relu, apply_gelu, softmax};
+use FFN::model::{forward, backward};
+use FFN::losses::{mse_loss, cross_entropy_loss};
+use FFN::gradients::{
+    relu_gradient, gelu_gradient, loss_gradient, 
+    softmax_cross_entropy_grad, softmax_gradient,
+};
 
 fn print_matrix(name: &str, matrix: &[Vec<f32>]) {
     println!("{}", name);
     for row in matrix {
         println!("    {:?}", row);
+
+        
     }
 }
 
 fn main() {
+
+
+        let dataset = load_dataset("data")
+        .expect("Failed to load dataset");
+
+    println!("Loaded {} translation pairs", dataset.len());
+
+    for (i, pair) in dataset.iter().take(5).enumerate() {
+        println!();
+        println!("PAIR {}", i + 1);
+        println!("SOURCE: {}", pair.source);
+        println!("TARGET: {}", pair.target);
+    }
     let raw_input = Input {
         x1: 11.0,
         x2: 102.0,
