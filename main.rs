@@ -1,11 +1,16 @@
 mod FFN;
 mod Tokenizer;
+mod Embedding;
 
 use Tokenizer::dataset::load_dataset;
 use Tokenizer::tokenizer::Tokenizer as BpeTokenizer;
+use Embedding::Embedding as EmbeddingModel;
 
 fn main() {
-    // LOAD DATASET
+
+    // 1. LOAD DATASET
+
+    println!("LOADING DATASET");
 
     let dataset = load_dataset("data")
         .expect("Failed to load dataset");
@@ -15,7 +20,7 @@ fn main() {
         dataset.len()
     );
 
-    // COLLECT SOURCE + TARGET TEXT
+    // 2. COLLECT SOURCE + TARGET TEXT
 
     let mut texts: Vec<String> = Vec::new();
 
@@ -29,29 +34,51 @@ fn main() {
         texts.len()
     );
 
-    // CREATE BPE TOKENIZER
+    // 3. CREATE BPE TOKENIZER
+
+    println!();
+    println!("CREATING BPE TOKENIZER");
 
     let mut tokenizer = BpeTokenizer::new(100);
 
-    // TRAIN
+    // 4. TRAIN BPE
 
     tokenizer.train(&texts);
 
-    // PRINT VOCABULARY
+    println!();
+    println!(
+        "Final vocabulary size: {}",
+        tokenizer.vocab_size()
+    );
 
-    tokenizer.print_vocab();
+    // 5. CREATE EMBEDDING MODEL
 
-    // PRINT MERGES
+    println!();
+    println!("CREATING EMBEDDING MODEL");
 
-    tokenizer.print_merges();
+    let vocab_size = tokenizer.vocab_size();
+    let embedding_dim = 128;
 
-    // TEST
+    let embedding = EmbeddingModel::new(
+        vocab_size,
+        embedding_dim,
+    );
+
+    println!(
+        "Vocabulary size: {}",
+        vocab_size
+    );
+
+    println!(
+        "Embedding dimension: {}",
+        embedding_dim
+    );
+
+    // 6. TEST TOKENIZER + EMBEDDING
 
     if let Some(pair) = dataset.first() {
         println!();
-        println!("========================================");
-        println!("TOKENIZER TEST");
-        println!("========================================");
+        println!("TOKENIZER + EMBEDDING TEST");
 
         println!();
         println!("SOURCE:");
@@ -67,22 +94,54 @@ fn main() {
 
         // ENCODE
 
-        let encoded = tokenizer.encode(&pair.source);
+        let token_ids = tokenizer.encode(&pair.source);
 
         println!();
-        println!("ENCODED:");
-        println!("{:?}", encoded);
+        println!("TOKEN IDS:");
+        println!("{:?}", token_ids);
 
         // DECODE
 
-        let decoded = tokenizer.decode(&encoded);
+        let decoded = tokenizer.decode(&token_ids);
 
         println!();
         println!("DECODED:");
         println!("{}", decoded);
 
-        // TOKEN DEBUG
+        // EMBEDDING
 
-        tokenizer.print_tokens(&pair.source);
+        println!();
+        println!("EMBEDDING");
+
+    let embeddings = embedding.forward(&token_ids);
+
+    println!(
+        "Input token count: {}",
+        token_ids.len()
+    );
+
+    println!(
+        "Embedding output count: {}",
+        embeddings.len()
+    );
+
+    for (i, (token_id, vector)) in token_ids
+        .iter()
+        .zip(embeddings.iter())
+        .enumerate()
+    {
+        println!();
+        println!(
+            "Token {} | ID {} | Embedding dimension {}",
+            i,
+            token_id,
+            vector.len()
+        );
+
+        println!(
+            "First values: {:?}",
+            &vector[..vector.len().min(10)]
+        );
+    }
     }
 }
