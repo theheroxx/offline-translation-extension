@@ -23,6 +23,7 @@ use std::f32::consts::PI;
 ///
 /// Unlike vanilla sinusoidal positional encoding,
 /// the positional information is applied through rotation.
+/// 
 pub struct PositionalEncoding {
     pub dimension: usize,
     pub max_sequence_length: usize,
@@ -224,10 +225,7 @@ impl PositionalEncoding {
     }
 
     /// Apply RoPE to a batch of Query vectors.
-    pub fn apply_to_queries(
-        &self,
-        queries: &[Vec<f32>],
-    ) -> Vec<Vec<f32>> {
+    pub fn apply_to_queries( &self ,queries: &[Vec<f32>],) -> Vec<Vec<f32>> {
         assert!(
             queries.len() <= self.max_sequence_length,
             "Sequence length exceeds maximum sequence length"
@@ -243,10 +241,7 @@ impl PositionalEncoding {
     }
 
     /// Apply RoPE to a batch of Key vectors.
-    pub fn apply_to_keys(
-        &self,
-        keys: &[Vec<f32>],
-    ) -> Vec<Vec<f32>> {
+    pub fn apply_to_keys( &self, keys: &[Vec<f32>],) -> Vec<Vec<f32>> {
         assert!(
             keys.len() <= self.max_sequence_length,
             "Sequence length exceeds maximum sequence length"

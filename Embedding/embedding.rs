@@ -14,9 +14,9 @@ pub struct Embedding {
 }
 
 impl Embedding {
-    // =========================================================
+
     // CREATE EMBEDDING
-    // =========================================================
+
 
     pub fn new(
         vocab_size: usize,
@@ -64,9 +64,9 @@ impl Embedding {
     }
 
 
-    // =========================================================
+
     // FORWARD
-    // =========================================================
+
     //
     // Input:
     //
@@ -78,7 +78,7 @@ impl Embedding {
     //
     //     [5][embedding_dim]
     //
-    // =========================================================
+
 
     pub fn forward(
         &self,
@@ -104,9 +104,9 @@ impl Embedding {
     }
 
 
-    // =========================================================
+
     // BACKWARD
-    // =========================================================
+
     //
     // Embedding is different from a normal Linear layer.
     //
@@ -119,7 +119,7 @@ impl Embedding {
     // Only the embedding vectors that were actually used
     // receive gradients.
     //
-    // =========================================================
+
 
     pub fn backward(
         &self,
@@ -162,9 +162,9 @@ impl Embedding {
     }
 
 
-    // =========================================================
+
     // UPDATE
-    // =========================================================
+
 
     pub fn update(
         &mut self,
@@ -192,14 +192,10 @@ impl Embedding {
     }
 
 
-    // =========================================================
-    // GET ONE EMBEDDING VECTOR
-    // =========================================================
 
-    pub fn get(
-        &self,
-        token_id: usize,
-    ) -> &[f32] {
+    // GET ONE EMBEDDING VECTOR
+
+    pub fn get(&self,token_id: usize,) -> &[f32] {
         assert!(
             token_id < self.vocab_size,
             "Token ID {} is outside vocabulary size {}",
@@ -211,22 +207,18 @@ impl Embedding {
     }
 
 
-    // =========================================================
+
     // EMBEDDING SIZE
-    // =========================================================
-
-    pub fn vocab_size(&self) -> usize {
-        self.vocab_size
-    }
-
-    pub fn embedding_dim(&self) -> usize {
-        self.embedding_dim
-    }
 
 
-    // =========================================================
+    pub fn vocab_size(&self) -> usize {self.vocab_size}
+
+    pub fn embedding_dim(&self) -> usize {self.embedding_dim}
+
+
+
     // PRINT
-    // =========================================================
+
 
     pub fn print(
         &self,
