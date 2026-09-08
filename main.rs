@@ -5,11 +5,10 @@ mod Embedding;
 use Tokenizer::dataset::load_dataset;
 use Tokenizer::tokenizer::Tokenizer as BpeTokenizer;
 use Embedding::Embedding as EmbeddingModel;
+use burn_ndarray::NdArrayDevice;
 
 fn main() {
-
-    // 1. LOAD DATASET
-
+    // Load dataset
     println!("LOADING DATASET");
 
     let dataset = load_dataset("data")
@@ -20,7 +19,7 @@ fn main() {
         dataset.len()
     );
 
-    // 2. COLLECT SOURCE + TARGET TEXT
+    // Collect source and target texts
 
     let mut texts: Vec<String> = Vec::new();
 
@@ -34,14 +33,13 @@ fn main() {
         texts.len()
     );
 
-    // 3. CREATE BPE TOKENIZER
-
-    println!();
-    println!("CREATING BPE TOKENIZER");
+    // Create BPE tokenizer
+    println!("\nCREATING BPE TOKENIZER");
 
     let mut tokenizer = BpeTokenizer::new(100);
 
-    // 4. TRAIN BPE
+    // Train BPE tokenizer
+    println!("\nTRAINING BPE TOKENIZER");
 
     tokenizer.train(&texts);
 
@@ -51,17 +49,18 @@ fn main() {
         tokenizer.vocab_size()
     );
 
-    // 5. CREATE EMBEDDING MODEL
-
-    println!();
-    println!("CREATING EMBEDDING MODEL");
+    // Create embedding model
+    println!("\nCREATING EMBEDDING MODEL");
 
     let vocab_size = tokenizer.vocab_size();
     let embedding_dim = 128;
 
-    let embedding = EmbeddingModel::new(
+    let device = NdArrayDevice::Cpu;
+
+    let embedding: EmbeddingModel<burn_ndarray::NdArray<f32>> = EmbeddingModel::new(
         vocab_size,
         embedding_dim,
+        &device,
     );
 
     println!(
@@ -74,74 +73,52 @@ fn main() {
         embedding_dim
     );
 
-    // 6. TEST TOKENIZER + EMBEDDING
-
+    // Tokenizer + embedding test
     if let Some(pair) = dataset.first() {
-        println!();
-        println!("TOKENIZER + EMBEDDING TEST");
+        println!("\nTOKENIZER + EMBEDDING TEST");
 
-        println!();
-        println!("SOURCE:");
+        // Source
+        println!("\nSOURCE:");
         println!("{}", pair.source);
 
-        // TOKENIZE
-
+        // Tokenize
         let tokens = tokenizer.tokenize(&pair.source);
 
         println!();
         println!("TOKENS:");
         println!("{:?}", tokens);
 
-        // ENCODE
-
+        // Encode
         let token_ids = tokenizer.encode(&pair.source);
 
         println!();
         println!("TOKEN IDS:");
         println!("{:?}", token_ids);
 
-        // DECODE
-
+        // Decode
         let decoded = tokenizer.decode(&token_ids);
 
         println!();
         println!("DECODED:");
         println!("{}", decoded);
 
-        // EMBEDDING
+        // Embedding
+        println!("\nEMBEDDING:");
 
-        println!();
-        println!("EMBEDDING");
+        let embeddings = embedding.forward_sequence(&token_ids, &device);
 
-    let embeddings = embedding.forward(&token_ids);
-
-    println!(
-        "Input token count: {}",
-        token_ids.len()
-    );
-
-    println!(
-        "Embedding output count: {}",
-        embeddings.len()
-    );
-
-    for (i, (token_id, vector)) in token_ids
-        .iter()
-        .zip(embeddings.iter())
-        .enumerate()
-    {
-        println!();
-        println!(
-            "Token {} | ID {} | Embedding dimension {}",
-            i,
-            token_id,
-            vector.len()
-        );
-
-        println!(
-            "First values: {:?}",
-            &vector[..vector.len().min(10)]
-        );
+        println!("Input token count: {}", token_ids.len());
+        println!("Embedding output count: {}", embeddings.shape().dims[0]);
+        println!("Embedding output is a tensor; inspect via tensor APIs if needed");
     }
-    }
+
+    // Transformer status
+    println!("\nTRANSFORMER MODULES");
+    println!("MHSA -> implemented");
+    println!("Masked MHSA -> implemented");
+    println!("Cross MHSA -> implemented");
+    println!("RoPE -> next integration step");
+
+    // Pipeline
+    println!("\nCURRENT PIPELINE: Dataset -> BPE Tokenizer -> Token IDs -> Embedding -> Transformer -> Output");
 }

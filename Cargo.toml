@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 burn = { version = "0.14", features = ["ndarray"] }
 serde = { version = "1.0", features = ["derive"] }
+burn-ndarray = "0.14"
 
 [[bin]]
 name = "rust_ml"
