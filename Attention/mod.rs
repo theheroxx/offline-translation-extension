@@ -2,7 +2,10 @@
 
 pub mod matrix;
 pub mod MHSA;
-
-pub use MHSA::{MHSA, QKV};pub mod cross_MHSA;
+pub mod cross_MHSA;
 pub mod masked_MHSA;
+
+pub use MHSA::{MHSA, QKV};
+pub use cross_MHSA::CrossMHSA;
+pub use cross_MHSA::QKV as CrossQKV;
 pub use masked_MHSA::MaskedMHSA;

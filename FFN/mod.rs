@@ -22,7 +22,6 @@ pub use activations::{
     gelu,
 };
 
-// Re-export loss functions.
 pub use losses::{
     mse_loss,
     cross_entropy_loss,
