@@ -1,8 +1,7 @@
 use burn::module::Module;
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
-use burn::tensor::activation::relu;
-
+use burn::tensor::activation::gelu;
 
 #[derive(Module, Debug)]
 pub struct FFN<B: Backend> {
@@ -11,16 +10,42 @@ pub struct FFN<B: Backend> {
 }
 
 impl<B: Backend> FFN<B> {
+
+
     pub fn new(
         input_size: usize,
         hidden_size: usize,
         output_size: usize,
         device: &B::Device,
     ) -> Self {
-        let linear1 = LinearConfig::new(input_size, hidden_size)
+
+        assert!(
+            input_size > 0,
+            "FFN input size must be greater than zero"
+        );
+
+        assert!(
+            hidden_size > 0,
+            "FFN hidden size must be greater than zero"
+        );
+
+        assert!(
+            output_size > 0,
+            "FFN output size must be greater than zero"
+        );
+
+        let linear1 =
+            LinearConfig::new(
+                input_size,
+                hidden_size,
+            )
             .init(device);
 
-        let linear2 = LinearConfig::new(hidden_size, output_size)
+        let linear2 =
+            LinearConfig::new(
+                hidden_size,
+                output_size,
+            )
             .init(device);
 
         Self {
@@ -30,13 +55,17 @@ impl<B: Backend> FFN<B> {
     }
 
 
+
     pub fn forward(
         &self,
-        input: Tensor<B, 2>,
-    ) -> Tensor<B, 2> {
-        let hidden = self.linear1.forward(input);
+        input: Tensor<B, 3>,) -> Tensor<B, 3> {
 
-        let hidden = relu(hidden);
+        let hidden =
+            self.linear1.forward(input);
+
+        let hidden =
+            gelu(hidden);
+
 
         self.linear2.forward(hidden)
     }
