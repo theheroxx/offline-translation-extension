@@ -1,39 +1,39 @@
-use crate::FFN::input_module::Labels;
+use burn::prelude::*;
+use burn::tensor::activation::log_softmax;
 
-pub fn mse_loss(y: &Labels, y_pred: &[f32]) -> f32 {
-    let y_vec = y.to_vec();
 
-    assert_eq!(
-        y_vec.len(),
-        y_pred.len(),
-        "Labels and predictions must have the same length"
-    );
+pub fn mse_loss<B: Backend>(
+    predictions: Tensor<B, 2>,
+    targets: Tensor<B, 2>,
+) -> Tensor<B, 1> {
+    let difference = predictions - targets;
 
-    y_vec
-        .iter()
-        .zip(y_pred.iter())
-        .map(|(&target, &prediction)| (prediction - target).powi(2))
-        .sum::<f32>()
-        / y_vec.len() as f32
+    difference
+        .powf_scalar(2.0)
+        .mean()
 }
 
-pub fn cross_entropy_loss(y: &Labels, y_pred: &[f32]) -> f32 {
-    let y_vec: Vec<f32> = y.to_vec();
 
-    assert_eq!(
-        y_vec.len(),
-        y_pred.len(),
-        "Labels and predictions must have the same length"
-    );
 
-    let epsilon = 1e-7;
-    
-    y_vec
-        .iter()
-        .zip(y_pred.iter())
-        .map(|(&target, &prediction)| {
-            let pred = prediction.clamp(epsilon, 1.0 - epsilon);
-            -(target * pred.ln() + (1.0 - target) * (1.0 - pred).ln())
-        })
-        .sum::<f32>() / y_vec.len() as f32
+pub fn cross_entropy_loss<B: Backend>(
+    logits: Tensor<B, 3>,
+    targets: Tensor<B, 2, Int>,
+) -> Tensor<B, 1> {
+
+    let log_probabilities =
+        log_softmax(logits, 2);
+
+
+    let targets =
+        targets.unsqueeze_dim(2);
+
+
+
+let target_log_probabilities =
+    log_probabilities.gather(2, targets);
+
+let target_log_probabilities: Tensor<B, 2> =
+    target_log_probabilities.squeeze_dims(&[2]);
+
+target_log_probabilities.neg().mean()
 }
