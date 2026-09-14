@@ -1,124 +1,226 @@
 mod FFN;
 mod Tokenizer;
 mod Embedding;
+mod Attention;
+mod PositionalEncoding;
+mod Transformer;
 
 use Tokenizer::dataset::load_dataset;
 use Tokenizer::tokenizer::Tokenizer as BpeTokenizer;
 use Embedding::Embedding as EmbeddingModel;
+
 use burn_ndarray::NdArrayDevice;
 
+type Backend = burn_ndarray::NdArray<f32>;
+
 fn main() {
-    // Load dataset
-    println!("LOADING DATASET");
+println!("LOADING DATASET");
 
-    let dataset = load_dataset("data")
-        .expect("Failed to load dataset");
+let dataset = load_dataset("data")
+    .expect("Failed to load dataset");
 
-    println!(
-        "Loaded {} translation pairs",
-        dataset.len()
-    );
+println!("Loaded {} translation pairs", dataset.len());
 
-    // Collect source and target texts
+let mut source_texts: Vec<String> = Vec::new();
+let mut target_texts: Vec<String> = Vec::new();
 
-    let mut texts: Vec<String> = Vec::new();
+for pair in &dataset {
+    source_texts.push(pair.source.clone());
+    target_texts.push(pair.target.clone());
+}
 
-    for pair in &dataset {
-        texts.push(pair.source.clone());
-        texts.push(pair.target.clone());
-    }
+println!("Source training texts: {}", source_texts.len());
+println!("Target training texts: {}", target_texts.len());
 
-    println!(
-        "Total training texts: {}",
-        texts.len()
-    );
+println!("\nCREATING SOURCE BPE TOKENIZER");
 
-    // Create BPE tokenizer
-    println!("\nCREATING BPE TOKENIZER");
+let mut source_tokenizer = BpeTokenizer::new(100);
 
-    let mut tokenizer = BpeTokenizer::new(100);
+println!("\nTRAINING SOURCE BPE TOKENIZER");
 
-    // Train BPE tokenizer
-    println!("\nTRAINING BPE TOKENIZER");
+source_tokenizer.train(&source_texts);
 
-    tokenizer.train(&texts);
+let source_vocab_size = source_tokenizer.vocab_size();
 
-    println!();
-    println!(
-        "Final vocabulary size: {}",
-        tokenizer.vocab_size()
-    );
+println!(
+    "Source vocabulary size: {}",
+    source_vocab_size
+);
 
-    // Create embedding model
-    println!("\nCREATING EMBEDDING MODEL");
+println!("\nCREATING TARGET BPE TOKENIZER");
 
-    let vocab_size = tokenizer.vocab_size();
-    let embedding_dim = 128;
+let mut target_tokenizer = BpeTokenizer::new(100);
 
-    let device = NdArrayDevice::Cpu;
+println!("\nTRAINING TARGET BPE TOKENIZER");
 
-    let embedding: EmbeddingModel<burn_ndarray::NdArray<f32>> = EmbeddingModel::new(
-        vocab_size,
+target_tokenizer.train(&target_texts);
+
+let target_vocab_size = target_tokenizer.vocab_size();
+
+println!(
+    "Target vocabulary size: {}",
+    target_vocab_size
+);
+
+let device = NdArrayDevice::Cpu;
+
+let embedding_dim = 128;
+
+println!("\nCREATING SOURCE EMBEDDING");
+
+let source_embedding: EmbeddingModel<Backend> =
+    EmbeddingModel::new(
+        source_vocab_size,
         embedding_dim,
         &device,
     );
 
+println!(
+    "Source vocabulary size: {}",
+    source_vocab_size
+);
+
+println!(
+    "Source embedding dimension: {}",
+    embedding_dim
+);
+
+println!("\nCREATING TARGET EMBEDDING");
+
+let target_embedding: EmbeddingModel<Backend> =
+    EmbeddingModel::new(
+        target_vocab_size,
+        embedding_dim,
+        &device,
+    );
+
+println!(
+    "Target vocabulary size: {}",
+    target_vocab_size
+);
+
+println!(
+    "Target embedding dimension: {}",
+    embedding_dim
+);
+
+if let Some(pair) = dataset.first() {
+    println!("\n================================================");
+    println!("SOURCE TOKENIZER + EMBEDDING TEST");
+    println!("================================================");
+
+    println!("\nSOURCE:");
+    println!("{}", pair.source);
+
+    let source_tokens =
+        source_tokenizer.tokenize(&pair.source);
+
+    println!("\nSOURCE TOKENS:");
+    println!("{:?}", source_tokens);
+
+    let source_token_ids =
+        source_tokenizer.encode(&pair.source);
+
+    println!("\nSOURCE TOKEN IDS:");
+    println!("{:?}", source_token_ids);
+
+    let source_decoded =
+        source_tokenizer.decode(&source_token_ids);
+
+    println!("\nSOURCE DECODED:");
+    println!("{}", source_decoded);
+
+    let source_embeddings =
+        source_embedding.forward_sequence(
+            &source_token_ids,
+            &device,
+        );
+
+    println!("\nSOURCE EMBEDDING:");
+
     println!(
-        "Vocabulary size: {}",
-        vocab_size
+        "Input token count: {}",
+        source_token_ids.len()
     );
 
     println!(
-        "Embedding dimension: {}",
-        embedding_dim
+        "Embedding tensor shape: {:?}",
+        source_embeddings.shape().dims::<3>()
+    );
+}
+
+if let Some(pair) = dataset.first() {
+    println!("\n================================================");
+    println!("TARGET TOKENIZER + EMBEDDING TEST");
+    println!("================================================");
+
+    println!("\nTARGET:");
+    println!("{}", pair.target);
+
+    let target_tokens =
+        target_tokenizer.tokenize(&pair.target);
+
+    println!("\nTARGET TOKENS:");
+    println!("{:?}", target_tokens);
+
+    let target_token_ids =
+        target_tokenizer.encode(&pair.target);
+
+    println!("\nTARGET TOKEN IDS:");
+    println!("{:?}", target_token_ids);
+
+    let target_decoded =
+        target_tokenizer.decode(&target_token_ids);
+
+    println!("\nTARGET DECODED:");
+    println!("{}", target_decoded);
+
+    let target_embeddings =
+        target_embedding.forward_sequence(
+            &target_token_ids,
+            &device,
+        );
+
+    println!("\nTARGET EMBEDDING:");
+
+    println!(
+        "Input token count: {}",
+        target_token_ids.len()
     );
 
-    // Tokenizer + embedding test
-    if let Some(pair) = dataset.first() {
-        println!("\nTOKENIZER + EMBEDDING TEST");
+    println!(
+        "Embedding tensor shape: {:?}",
+        target_embeddings.shape().dims::<3>()
+    );
+}
 
-        // Source
-        println!("\nSOURCE:");
-        println!("{}", pair.source);
+println!("\n================================================");
+println!("TRANSFORMER MODULES");
+println!("================================================");
 
-        // Tokenize
-        let tokens = tokenizer.tokenize(&pair.source);
+println!("EncoderBlock       -> implemented");
+println!("DecoderBlock       -> implemented");
+println!("MHSA               -> implemented");
+println!("Masked MHSA        -> implemented");
+println!("Cross MHSA         -> implemented");
+println!("RoPE               -> next integration step");
+println!("Transformer        -> not yet implemented");
+println!("LM Head            -> not yet implemented");
 
-        println!();
-        println!("TOKENS:");
-        println!("{:?}", tokens);
+println!("\n================================================");
+println!("CURRENT PIPELINE");
+println!("================================================");
 
-        // Encode
-        let token_ids = tokenizer.encode(&pair.source);
+println!(
+    "Source: Dataset -> Source BPE -> Source IDs -> Source Embedding"
+);
 
-        println!();
-        println!("TOKEN IDS:");
-        println!("{:?}", token_ids);
+println!(
+    "Target: Dataset -> Target BPE -> Target IDs -> Target Embedding"
+);
 
-        // Decode
-        let decoded = tokenizer.decode(&token_ids);
+println!(
+    "Then: Source Embedding -> Encoder -> Decoder -> LM Head"
+);
 
-        println!();
-        println!("DECODED:");
-        println!("{}", decoded);
-
-        // Embedding
-        println!("\nEMBEDDING:");
-
-        let embeddings = embedding.forward_sequence(&token_ids, &device);
-
-        println!("Input token count: {}", token_ids.len());
-        println!("Embedding output count: {}", embeddings.shape().dims[0]);
-        println!("Embedding output is a tensor; inspect via tensor APIs if needed");
-    }
-
-    // Transformer status
-    println!("\nTRANSFORMER MODULES");
-    println!("MHSA -> implemented");
-    println!("Masked MHSA -> implemented");
-    println!("Cross MHSA -> implemented");
-    println!("RoPE -> next integration step");
-
-    // Pipeline
-    println!("\nCURRENT PIPELINE: Dataset -> BPE Tokenizer -> Token IDs -> Embedding -> Transformer -> Output");
 }
