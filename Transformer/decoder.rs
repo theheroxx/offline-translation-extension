@@ -21,6 +21,8 @@ pub fn new(
 embedding_dimension: usize,
 num_heads: usize,
 ffn_hidden_dimension: usize,
+max_encoder_sequence_length: usize,
+max_decoder_sequence_length: usize,
 device: &B::Device,
 ) -> Self {
 assert!(
@@ -44,27 +46,39 @@ embedding_dimension > 0,
     );
 
     let norm1 =
-        LayerNormConfig::new(embedding_dimension).init(device);
+        LayerNormConfig::new(
+            embedding_dimension
+        )
+        .init(device);
 
     let masked_attention =
         MaskedMHSA::new(
             embedding_dimension,
             num_heads,
+            max_decoder_sequence_length,
             device,
         );
 
     let norm2 =
-        LayerNormConfig::new(embedding_dimension).init(device);
+        LayerNormConfig::new(
+            embedding_dimension
+        )
+        .init(device);
 
     let cross_attention =
         CrossMHSA::new(
             embedding_dimension,
             num_heads,
+            max_decoder_sequence_length,
+            max_encoder_sequence_length,
             device,
         );
 
     let norm3 =
-        LayerNormConfig::new(embedding_dimension).init(device);
+        LayerNormConfig::new(
+            embedding_dimension
+        )
+        .init(device);
 
     let ffn =
         FFN::new(
@@ -90,16 +104,23 @@ pub fn forward(
     encoder_output: Tensor<B, 3>,
 ) -> Tensor<B, 3> {
     let normalized_decoder =
-        self.norm1.forward(decoder_input.clone());
+        self.norm1.forward(
+            decoder_input.clone()
+        );
 
     let self_attention_output =
-        self.masked_attention.forward(normalized_decoder);
+        self.masked_attention.forward(
+            normalized_decoder
+        );
 
     let x =
-        decoder_input + self_attention_output;
+        decoder_input +
+        self_attention_output;
 
     let normalized_x =
-        self.norm2.forward(x.clone());
+        self.norm2.forward(
+            x.clone()
+        );
 
     let cross_attention_output =
         self.cross_attention.forward(
@@ -111,10 +132,14 @@ pub fn forward(
         x + cross_attention_output;
 
     let normalized_x =
-        self.norm3.forward(x.clone());
+        self.norm3.forward(
+            x.clone()
+        );
 
     let ffn_output =
-        self.ffn.forward(normalized_x);
+        self.ffn.forward(
+            normalized_x
+        );
 
     x + ffn_output
 }
