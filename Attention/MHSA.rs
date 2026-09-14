@@ -3,6 +3,8 @@ use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
 use burn::tensor::activation::softmax;
 
+use crate::PositionalEncoding::positional_encoding::PositionalEncoding;
+
 #[derive(Debug)]
 pub struct QKV<B: Backend> {
 pub q: Tensor<B, 3>,
@@ -16,6 +18,7 @@ pub w_q: Linear<B>,
 pub w_k: Linear<B>,
 pub w_v: Linear<B>,
 pub w_o: Linear<B>,
+pub rope: PositionalEncoding<B>,
 pub embedding_dimension: usize,
 pub num_heads: usize,
 }
@@ -24,16 +27,26 @@ impl<B: Backend> MHSA<B> {
 pub fn new(
 embedding_dimension: usize,
 num_heads: usize,
+max_sequence_length: usize,
 device: &B::Device,
 ) -> Self {
 assert!(embedding_dimension > 0);
 assert!(num_heads > 0);
-assert!(
-embedding_dimension % num_heads == 0,
-"Embedding dimension ({}) must be divisible by number of heads ({})",
-embedding_dimension,
-num_heads
-);
+
+    assert!(
+        embedding_dimension % num_heads == 0,
+        "Embedding dimension ({}) must be divisible by number of heads ({})",
+        embedding_dimension,
+        num_heads
+    );
+
+    let head_dimension = embedding_dimension / num_heads;
+
+    assert!(
+        head_dimension % 2 == 0,
+        "Attention head dimension ({}) must be even for RoPE",
+        head_dimension
+    );
 
     let w_q = LinearConfig::new(
         embedding_dimension,
@@ -59,11 +72,19 @@ num_heads
     )
     .init(device);
 
+    let rope = PositionalEncoding::new(
+        head_dimension,
+        max_sequence_length,
+        10_000.0,
+        device,
+    );
+
     Self {
         w_q,
         w_k,
         w_v,
         w_o,
+        rope,
         embedding_dimension,
         num_heads,
     }
@@ -79,7 +100,7 @@ pub fn project_qkv(&self, input: Tensor<B, 3>) -> QKV<B> {
 
 fn split_heads(&self, tensor: Tensor<B, 3>) -> Tensor<B, 4> {
     let [batch_size, sequence_length, embedding_dimension] =
-        tensor.shape().dims();
+        tensor.shape().dims::<3>();
 
     assert_eq!(
         embedding_dimension,
@@ -105,7 +126,7 @@ fn combine_heads(&self, tensor: Tensor<B, 4>) -> Tensor<B, 3> {
         num_heads,
         sequence_length,
         head_dimension,
-    ] = tensor.shape().dims();
+    ] = tensor.shape().dims::<4>();
 
     assert_eq!(
         num_heads,
@@ -148,8 +169,14 @@ fn attention(
 pub fn forward(&self, input: Tensor<B, 3>) -> Tensor<B, 3> {
     let qkv = self.project_qkv(input);
 
-    let q = self.split_heads(qkv.q);
-    let k = self.split_heads(qkv.k);
+    let q = self.rope.forward(
+        self.split_heads(qkv.q)
+    );
+
+    let k = self.rope.forward(
+        self.split_heads(qkv.k)
+    );
+
     let v = self.split_heads(qkv.v);
 
     let attention_output = self.attention(q, k, v);
