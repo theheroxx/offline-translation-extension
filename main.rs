@@ -1,4 +1,3 @@
-
 mod FFN;
 mod Tokenizer;
 mod Embedding;
@@ -6,224 +5,274 @@ mod Attention;
 mod PositionalEncoding;
 mod Transformer;
 
+use burn::prelude::*;
+use burn_ndarray::NdArray;
+
 use Tokenizer::batch::TranslationBatch;
 use Tokenizer::dataset::load_dataset;
+use Tokenizer::segmenter::{DocumentSegmenter, TokenCounter};
 use Tokenizer::tokenizer::Tokenizer as BpeTokenizer;
-use Embedding::Embedding as EmbeddingModel;
+
+use Embedding::Embedding as EmbeddingLayer;
 use Transformer::transformer::Transformer as TransformerModel;
 
-use burn::prelude::*;
-use burn_ndarray::NdArrayDevice;
+type Backend = NdArray<f32>;
 
-type Backend = burn_ndarray::NdArray<f32>;
+struct SourceTokenCounter<'a> {
+    tokenizer: &'a BpeTokenizer,
+}
+
+impl<'a> TokenCounter for SourceTokenCounter<'a> {
+    fn count(&self, text: &str) -> usize {
+        self.tokenizer.encode_source(text).len()
+    }
+}
+
+struct TargetTokenCounter<'a> {
+    tokenizer: &'a BpeTokenizer,
+}
+
+impl<'a> TokenCounter for TargetTokenCounter<'a> {
+    fn count(&self, text: &str) -> usize {
+        self.tokenizer.encode_target_labels(text).len()
+    }
+}
 
 fn main() {
     println!("LOADING DATASET");
 
-    let dataset =
-        load_dataset("data")
-            .expect("Failed to load dataset");
+    let dataset = load_dataset("data")
+        .expect("Failed to load dataset");
 
-    println!(
-        "Loaded {} translation pairs",
-        dataset.len()
-    );
+    println!("Loaded {} translation pairs", dataset.len());
 
     if dataset.is_empty() {
         panic!("Dataset is empty");
     }
 
-    let source_texts: Vec<String> =
-        dataset
-            .iter()
-            .map(|pair| pair.source.clone())
-            .collect();
+    let source_texts: Vec<String> = dataset
+        .iter()
+        .map(|pair| pair.source.clone())
+        .collect();
 
-    let target_texts: Vec<String> =
-        dataset
-            .iter()
-            .map(|pair| pair.target.clone())
-            .collect();
+    let target_texts: Vec<String> = dataset
+        .iter()
+        .map(|pair| pair.target.clone())
+        .collect();
 
-    println!(
-        "Source training texts: {}",
-        source_texts.len()
-    );
-
-    println!(
-        "Target training texts: {}",
-        target_texts.len()
-    );
+    println!("Source training texts: {}", source_texts.len());
+    println!("Target training texts: {}", target_texts.len());
 
     println!("\nCREATING SOURCE BPE TOKENIZER");
 
-    let mut source_tokenizer =
-        BpeTokenizer::new(100);
+    let mut source_tokenizer = BpeTokenizer::new(100);
 
     println!("\nTRAINING SOURCE BPE TOKENIZER");
 
     source_tokenizer.train(&source_texts);
 
-    let source_vocab_size =
-        source_tokenizer.vocab_size();
-
     println!(
         "Source vocabulary size: {}",
-        source_vocab_size
+        source_tokenizer.vocab_size()
     );
 
     println!("\nCREATING TARGET BPE TOKENIZER");
 
-    let mut target_tokenizer =
-        BpeTokenizer::new(100);
+    let mut target_tokenizer = BpeTokenizer::new(100);
 
     println!("\nTRAINING TARGET BPE TOKENIZER");
 
     target_tokenizer.train(&target_texts);
 
-    let target_vocab_size =
-        target_tokenizer.vocab_size();
-
     println!(
         "Target vocabulary size: {}",
-        target_vocab_size
+        target_tokenizer.vocab_size()
     );
 
-    let device =
-        NdArrayDevice::Cpu;
-
-    let embedding_dim = 128;
-    let num_heads = 8;
-    let ffn_hidden_dim = 512;
-    let num_encoder_layers = 6;
-    let num_decoder_layers = 6;
     let max_encoder_sequence_length = 512;
     let max_decoder_sequence_length = 512;
 
-    println!("\nCREATING SOURCE EMBEDDING");
-
-    let source_embedding:
-        EmbeddingModel<Backend> =
-        EmbeddingModel::new(
-            source_vocab_size,
-            embedding_dim,
-            &device,
-        );
-
-    println!(
-        "Source vocabulary size: {}",
-        source_vocab_size
-    );
-
-    println!(
-        "Source embedding dimension: {}",
-        embedding_dim
-    );
-
-    println!("\nCREATING TARGET EMBEDDING");
-
-    let target_embedding:
-        EmbeddingModel<Backend> =
-        EmbeddingModel::new(
-            target_vocab_size,
-            embedding_dim,
-            &device,
-        );
-
-    println!(
-        "Target vocabulary size: {}",
-        target_vocab_size
-    );
-
-    println!(
-        "Target embedding dimension: {}",
-        embedding_dim
-    );
-
-    println!("\nCREATING TRANSFORMER");
-
-    let transformer:
-        TransformerModel<Backend> =
-        TransformerModel::new(
-            num_encoder_layers,
-            num_decoder_layers,
-            embedding_dim,
-            num_heads,
-            ffn_hidden_dim,
-            max_encoder_sequence_length,
-            max_decoder_sequence_length,
-            target_vocab_size,
-            &device,
-        );
-
-    println!(
-        "Encoder layers: {}",
-        num_encoder_layers
-    );
-
-    println!(
-        "Decoder layers: {}",
-        num_decoder_layers
-    );
-
-    println!(
-        "Embedding dimension: {}",
-        embedding_dim
-    );
-
-    println!(
-        "Attention heads: {}",
-        num_heads
-    );
-
-    println!(
-        "FFN hidden dimension: {}",
-        ffn_hidden_dim
-    );
-
-    println!(
-        "Maximum encoder sequence length: {}",
-        max_encoder_sequence_length
-    );
-
-    println!(
-        "Maximum decoder sequence length: {}",
-        max_decoder_sequence_length
-    );
-
-    println!(
-        "Target vocabulary size: {}",
-        target_vocab_size
-    );
-
-    let batch_size =
-        dataset.len().min(8);
-
-    let batch =
-        TranslationBatch::from_pairs(
-            &dataset[..batch_size],
-            &source_tokenizer,
-            &target_tokenizer,
-        );
-
     println!("\n================================================");
-    println!("TRANSLATION BATCH");
+    println!("DOCUMENT SEGMENTATION");
     println!("================================================");
 
+    let source_counter = SourceTokenCounter {
+        tokenizer: &source_tokenizer,
+    };
+
+    let target_counter = TargetTokenCounter {
+        tokenizer: &target_tokenizer,
+    };
+
+    let segmenter = DocumentSegmenter::new(
+        max_encoder_sequence_length,
+        max_decoder_sequence_length,
+        source_counter,
+        target_counter,
+    );
+
+    let segments = segmenter.segment_dataset(&dataset);
+
     println!(
-        "Batch size: {}",
-        batch.batch_size()
+        "Original translation pairs: {}",
+        dataset.len()
     );
 
     println!(
-        "Source shape: {:?}",
-        batch.source_shape()
+        "Generated translation segments: {}",
+        segments.len()
+    );
+
+    if segments.is_empty() {
+        panic!("Segmentation produced no translation segments");
+    }
+
+    println!("\n================================================");
+    println!("SEGMENT TOKEN LENGTH DIAGNOSTICS");
+    println!("================================================");
+
+    let mut max_segment_source_tokens = 0usize;
+    let mut max_segment_target_tokens = 0usize;
+
+    let mut min_segment_source_tokens = usize::MAX;
+    let mut min_segment_target_tokens = usize::MAX;
+
+    let mut total_segment_source_tokens = 0usize;
+    let mut total_segment_target_tokens = 0usize;
+
+    let mut source_segments_over_limit = 0usize;
+    let mut target_segments_over_limit = 0usize;
+
+    for (index, segment) in segments.iter().enumerate() {
+        let source_tokens = source_tokenizer
+            .encode_source(&segment.source)
+            .len();
+
+        let target_tokens = target_tokenizer
+            .encode_target_labels(&segment.target)
+            .len();
+
+        max_segment_source_tokens =
+            max_segment_source_tokens.max(source_tokens);
+
+        max_segment_target_tokens =
+            max_segment_target_tokens.max(target_tokens);
+
+        min_segment_source_tokens =
+            min_segment_source_tokens.min(source_tokens);
+
+        min_segment_target_tokens =
+            min_segment_target_tokens.min(target_tokens);
+
+        total_segment_source_tokens += source_tokens;
+        total_segment_target_tokens += target_tokens;
+
+        if source_tokens > max_encoder_sequence_length {
+            source_segments_over_limit += 1;
+        }
+
+        if target_tokens > max_decoder_sequence_length {
+            target_segments_over_limit += 1;
+        }
+
+        if index < 20 {
+            println!(
+                "Segment {:>4}: source={:>4} tokens | target={:>4} tokens",
+                index + 1,
+                source_tokens,
+                target_tokens
+            );
+        }
+    }
+
+    let segment_count = segments.len();
+
+    let average_segment_source_tokens =
+        total_segment_source_tokens as f64 / segment_count as f64;
+
+    let average_segment_target_tokens =
+        total_segment_target_tokens as f64 / segment_count as f64;
+
+    println!("\n================================================");
+    println!("SEGMENT TOKEN SUMMARY");
+    println!("================================================");
+
+    println!("Segment count: {}", segment_count);
+
+    println!(
+        "Minimum source tokens: {}",
+        min_segment_source_tokens
     );
 
     println!(
-        "Target shape: {:?}",
-        batch.target_shape()
+        "Maximum source tokens: {}",
+        max_segment_source_tokens
     );
+
+    println!(
+        "Average source tokens: {:.2}",
+        average_segment_source_tokens
+    );
+
+    println!(
+        "Minimum target tokens: {}",
+        min_segment_target_tokens
+    );
+
+    println!(
+        "Maximum target tokens: {}",
+        max_segment_target_tokens
+    );
+
+    println!(
+        "Average target tokens: {:.2}",
+        average_segment_target_tokens
+    );
+
+    println!(
+        "Source segments over {} tokens: {}",
+        max_encoder_sequence_length,
+        source_segments_over_limit
+    );
+
+    println!(
+        "Target segments over {} tokens: {}",
+        max_decoder_sequence_length,
+        target_segments_over_limit
+    );
+
+    assert_eq!(
+        source_segments_over_limit,
+        0,
+        "Some source segments exceed the encoder context length"
+    );
+
+    assert_eq!(
+        target_segments_over_limit,
+        0,
+        "Some target segments exceed the decoder context length"
+    );
+
+    println!("\n================================================");
+    println!("CREATING TRANSLATION BATCH");
+    println!("================================================");
+
+    let batch_size = segments.len().min(8);
+
+    let batch = TranslationBatch::from_segments(
+        &segments[..batch_size],
+        &source_tokenizer,
+        &target_tokenizer,
+    );
+
+    batch.assert_within_context(
+        max_encoder_sequence_length,
+        max_decoder_sequence_length,
+    );
+
+    println!("Batch size: {}", batch.batch_size());
+    println!("Source shape: {:?}", batch.source_shape());
+    println!("Target shape: {:?}", batch.target_shape());
 
     println!(
         "Maximum source length: {}",
@@ -235,35 +284,134 @@ fn main() {
         batch.max_target_length
     );
 
-    assert!(
-        batch.max_source_length
-            <= max_encoder_sequence_length,
-        "Batch source sequence length ({}) exceeds maximum encoder sequence length ({})",
-        batch.max_source_length,
-        max_encoder_sequence_length
+    let device = Default::default();
+
+    println!("\n================================================");
+    println!("CREATING SOURCE EMBEDDING");
+    println!("================================================");
+
+    let source_embedding_dimension = 128;
+
+    let source_embedding = EmbeddingLayer::<Backend>::new(
+        source_tokenizer.vocab_size(),
+        source_embedding_dimension,
+        &device,
     );
 
-    assert!(
-        batch.max_target_length
-            <= max_decoder_sequence_length,
-        "Batch target sequence length ({}) exceeds maximum decoder sequence length ({})",
-        batch.max_target_length,
-        max_decoder_sequence_length
+    println!(
+        "Source vocabulary size: {}",
+        source_tokenizer.vocab_size()
     );
 
-    let source_ids =
-        batch.source_ids_flattened();
+    println!(
+        "Source embedding dimension: {}",
+        source_embedding_dimension
+    );
 
-    let target_input_ids =
-        batch.target_input_ids_flattened();
+    println!("\n================================================");
+    println!("CREATING TARGET EMBEDDING");
+    println!("================================================");
 
-    let source_ids =
+    let target_embedding_dimension = 128;
+
+    let target_embedding = EmbeddingLayer::<Backend>::new(
+        target_tokenizer.vocab_size(),
+        target_embedding_dimension,
+        &device,
+    );
+
+    println!(
+        "Target vocabulary size: {}",
+        target_tokenizer.vocab_size()
+    );
+
+    println!(
+        "Target embedding dimension: {}",
+        target_embedding_dimension
+    );
+
+    assert_eq!(
+        source_embedding_dimension,
+        target_embedding_dimension,
+        "Source and target embedding dimensions must match"
+    );
+
+    println!("\n================================================");
+    println!("CREATING TRANSFORMER");
+    println!("================================================");
+
+    let transformer = TransformerModel::<Backend>::new(
+        6,
+        6,
+        source_embedding_dimension,
+        8,
+        512,
+        max_encoder_sequence_length,
+        max_decoder_sequence_length,
+        target_tokenizer.vocab_size(),
+        &device,
+    );
+
+    println!(
+        "Encoder layers: {}",
+        transformer.num_encoder_layers
+    );
+
+    println!(
+        "Decoder layers: {}",
+        transformer.num_decoder_layers
+    );
+
+    println!(
+        "Embedding dimension: {}",
+        transformer.embedding_dimension
+    );
+
+    println!(
+        "Attention heads: {}",
+        transformer.num_heads
+    );
+
+    println!(
+        "FFN hidden dimension: {}",
+        transformer.ffn_hidden_dimension
+    );
+
+    println!(
+        "Maximum encoder sequence length: {}",
+        transformer.max_encoder_sequence_length
+    );
+
+    println!(
+        "Maximum decoder sequence length: {}",
+        transformer.max_decoder_sequence_length
+    );
+
+    println!(
+        "Target vocabulary size: {}",
+        transformer.target_vocab_size
+    );
+
+    println!("\n================================================");
+    println!("CREATING INPUT TENSORS");
+    println!("================================================");
+
+    let source_ids = batch.source_ids_flattened();
+    let target_input_ids = batch.target_input_ids_flattened();
+
+    let source_ids_i64: Vec<i64> = source_ids
+        .iter()
+        .map(|&id| id as i64)
+        .collect();
+
+    let target_input_ids_i64: Vec<i64> = target_input_ids
+        .iter()
+        .map(|&id| id as i64)
+        .collect();
+
+    let source_tensor =
         Tensor::<Backend, 1, Int>::from_ints(
-            source_ids
-                .iter()
-                .map(|&id| id as i64)
-                .collect::<Vec<i64>>()
-                .as_slice(),
+            source_ids_i64.as_slice(),
             &device,
         )
         .reshape([
@@ -271,13 +419,9 @@ fn main() {
             batch.max_source_length,
         ]);
 
-    let target_input_ids =
+    let target_tensor =
         Tensor::<Backend, 1, Int>::from_ints(
-            target_input_ids
-                .iter()
-                .map(|&id| id as i64)
-                .collect::<Vec<i64>>()
-                .as_slice(),
+            target_input_ids_i64.as_slice(),
             &device,
         )
         .reshape([
@@ -285,53 +429,31 @@ fn main() {
             batch.max_target_length,
         ]);
 
-    let source_embeddings =
-        source_embedding.forward(
-            source_ids,
-        );
+    println!(
+        "Source tensor shape: {:?}",
+        source_tensor.shape()
+    );
 
-    let target_embeddings =
-        target_embedding.forward(
-            target_input_ids,
-        );
+    println!(
+        "Target tensor shape: {:?}",
+        target_tensor.shape()
+    );
 
     println!("\n================================================");
-    println!("EMBEDDING TENSORS");
+    println!("CREATING PADDING MASKS");
     println!("================================================");
 
-    println!(
-        "Source embedding shape: {:?}",
-        source_embeddings
-            .shape()
-            .dims::<3>()
-    );
+    let source_padding_values = batch
+        .source_padding_mask()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<bool>>();
 
-    println!(
-        "Target embedding shape: {:?}",
-        target_embeddings
-            .shape()
-            .dims::<3>()
-    );
-
-    let source_padding_mask =
-        batch.source_padding_mask();
-
-    let target_padding_mask =
-        batch.target_padding_mask();
-
-    let source_padding_values:
-        Vec<bool> =
-        source_padding_mask
-            .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
-
-    let target_padding_values:
-        Vec<bool> =
-        target_padding_mask
-            .iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
+    let target_padding_values = batch
+        .target_padding_mask()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<bool>>();
 
     let source_padding_mask =
         Tensor::<Backend, 1, Bool>::from_bool(
@@ -353,91 +475,53 @@ fn main() {
             batch.max_target_length,
         ]);
 
-    println!("\n================================================");
-    println!("PADDING MASKS");
-    println!("================================================");
-
     println!(
         "Source padding mask shape: {:?}",
-        source_padding_mask
-            .shape()
-            .dims::<2>()
+        source_padding_mask.shape()
     );
 
     println!(
         "Target padding mask shape: {:?}",
-        target_padding_mask
-            .shape()
-            .dims::<2>()
+        target_padding_mask.shape()
     );
 
     println!("\n================================================");
-    println!("FULL TRANSFORMER FORWARD PASS");
+    println!("CREATING EMBEDDINGS");
     println!("================================================");
 
-    let logits =
-        transformer.forward(
-            source_embeddings,
-            target_embeddings,
-            Some(source_padding_mask),
-            Some(target_padding_mask),
-        );
+    let source_embeddings =
+        source_embedding.forward(source_tensor);
+
+    let target_embeddings =
+        target_embedding.forward(target_tensor);
 
     println!(
-        "Logits tensor shape: {:?}",
-        logits.shape().dims::<3>()
+        "Source embeddings shape: {:?}",
+        source_embeddings.shape()
     );
 
     println!(
-        "Expected logits shape: [{}, {}, {}]",
-        batch.batch_size(),
-        batch.max_target_length,
-        target_vocab_size
+        "Target embeddings shape: {:?}",
+        target_embeddings.shape()
     );
 
     println!("\n================================================");
-    println!("TRANSFORMER MODULES");
+    println!("RUNNING TRANSFORMER");
     println!("================================================");
 
-    println!("EncoderBlock       -> implemented");
-    println!("DecoderBlock       -> implemented");
-    println!("MHSA               -> implemented");
-    println!("Masked MHSA        -> implemented");
-    println!("Cross MHSA         -> implemented");
-    println!("RoPE               -> implemented");
-    println!("Transformer        -> implemented");
-    println!("LM Head            -> implemented");
-    println!("Source PAD Mask    -> implemented");
-    println!("Target PAD Mask    -> implemented");
-    println!("Causal Mask        -> implemented");
+    let output = transformer.forward(
+        source_embeddings,
+        target_embeddings,
+        Some(source_padding_mask),
+        Some(target_padding_mask),
+    );
+
+    println!(
+        "Transformer output shape: {:?}",
+        output.shape()
+    );
 
     println!("\n================================================");
-    println!("CURRENT PIPELINE");
+    println!("PIPELINE COMPLETE");
     println!("================================================");
-
-    println!(
-        "Source: Dataset -> Source BPE -> Source IDs -> Padding -> Source Embedding"
-    );
-
-    println!(
-        "Target: Dataset -> Target BPE -> Target Input IDs -> Padding -> Target Embedding"
-    );
-
-    println!(
-        "Encoder: Source Embedding -> Source PAD Mask -> Encoder Blocks"
-    );
-
-    println!(
-        "Decoder: Target Embedding -> Target PAD + Causal Mask -> Masked Self Attention"
-    );
-
-    println!(
-        "Cross Attention: Decoder States -> Source PAD Mask -> Encoder States"
-    );
-
-    println!(
-        "Output: Decoder Hidden States -> LM Head -> Target Vocabulary Logits"
-    );
-
-    println!("\nFULL BATCH TRANSFORMER PIPELINE VERIFIED");
 }

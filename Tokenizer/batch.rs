@@ -1,4 +1,5 @@
-use crate::Tokenizer::dataset::TranslationPair;
+
+use crate::Tokenizer::segmenter::TranslationSegment;
 use crate::Tokenizer::tokenizer::Tokenizer;
 
 #[derive(Debug, Clone)]
@@ -14,13 +15,13 @@ pub struct TranslationBatch {
 }
 
 impl TranslationBatch {
-    pub fn from_pairs(
-        pairs: &[TranslationPair],
+    pub fn from_segments(
+        segments: &[TranslationSegment],
         source_tokenizer: &Tokenizer,
         target_tokenizer: &Tokenizer,
     ) -> Self {
         assert!(
-            !pairs.is_empty(),
+            !segments.is_empty(),
             "Translation batch cannot be empty"
         );
 
@@ -32,28 +33,25 @@ impl TranslationBatch {
             "Source and target PAD token IDs must match"
         );
 
-        let mut source_ids = Vec::with_capacity(pairs.len());
-        let mut target_input_ids = Vec::with_capacity(pairs.len());
-        let mut target_label_ids = Vec::with_capacity(pairs.len());
+        let mut source_ids = Vec::with_capacity(segments.len());
+        let mut target_input_ids = Vec::with_capacity(segments.len());
+        let mut target_label_ids = Vec::with_capacity(segments.len());
 
-        let mut source_lengths = Vec::with_capacity(pairs.len());
-        let mut target_lengths = Vec::with_capacity(pairs.len());
+        let mut source_lengths = Vec::with_capacity(segments.len());
+        let mut target_lengths = Vec::with_capacity(segments.len());
 
         let mut max_source_length = 0;
         let mut max_target_length = 0;
 
-        for pair in pairs {
-            let source = source_tokenizer.encode_source(
-                &pair.source
-            );
+        for segment in segments {
+            let source =
+                source_tokenizer.encode_source(&segment.source);
 
-            let target_input = target_tokenizer.encode_target_input(
-                &pair.target
-            );
+            let target_input =
+                target_tokenizer.encode_target_input(&segment.target);
 
-            let target_labels = target_tokenizer.encode_target_labels(
-                &pair.target
-            );
+            let target_labels =
+                target_tokenizer.encode_target_labels(&segment.target);
 
             assert_eq!(
                 target_input.len(),
@@ -185,4 +183,25 @@ impl TranslationBatch {
             .flat_map(|sequence| sequence.iter().copied())
             .collect()
     }
+
+    pub fn assert_within_context(
+        &self,
+        max_source_tokens: usize,
+        max_target_tokens: usize,
+    ) {
+        assert!(
+            self.max_source_length <= max_source_tokens,
+            "Batch source sequence length ({}) exceeds maximum encoder sequence length ({})",
+            self.max_source_length,
+            max_source_tokens
+        );
+
+        assert!(
+            self.max_target_length <= max_target_tokens,
+            "Batch target sequence length ({}) exceeds maximum decoder sequence length ({})",
+            self.max_target_length,
+            max_target_tokens
+        );
+    }
 }
+
