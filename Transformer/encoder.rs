@@ -7,101 +7,92 @@ use crate::FFN::FFN;
 
 #[derive(Module, Debug)]
 pub struct EncoderBlock<B: Backend> {
-pub norm1: LayerNorm<B>,
-pub attention: MHSA<B>,
-pub norm2: LayerNorm<B>,
-pub ffn: FFN<B>,
+    pub norm1: LayerNorm<B>,
+    pub attention: MHSA<B>,
+    pub norm2: LayerNorm<B>,
+    pub ffn: FFN<B>,
 }
 
 impl<B: Backend> EncoderBlock<B> {
-pub fn new(
-embedding_dimension: usize,
-num_heads: usize,
-ffn_hidden_dimension: usize,
-max_sequence_length: usize,
-device: &B::Device,
-) -> Self {
-assert!(embedding_dimension > 0);
-assert!(num_heads > 0);
-assert!(ffn_hidden_dimension > 0);
+    pub fn new(
+        embedding_dimension: usize,
+        num_heads: usize,
+        ffn_hidden_dimension: usize,
+        max_sequence_length: usize,
+        device: &B::Device,
+    ) -> Self {
+        assert!(embedding_dimension > 0);
+        assert!(num_heads > 0);
+        assert!(ffn_hidden_dimension > 0);
 
-    assert!(
-        embedding_dimension % num_heads == 0,
-        "Embedding dimension must be divisible by the number of attention heads"
-    );
-
-    let norm1 =
-        LayerNormConfig::new(
-            embedding_dimension
-        )
-        .init(device);
-
-    let attention =
-        MHSA::new(
-            embedding_dimension,
-            num_heads,
-            max_sequence_length,
-            device,
+        assert!(
+            embedding_dimension % num_heads == 0,
+            "Embedding dimension must be divisible by the number of attention heads"
         );
 
-    let norm2 =
-        LayerNormConfig::new(
-            embedding_dimension
-        )
-        .init(device);
+        let norm1 =
+            LayerNormConfig::new(embedding_dimension)
+                .init(device);
 
-    let ffn =
-        FFN::new(
-            embedding_dimension,
-            ffn_hidden_dimension,
-            embedding_dimension,
-            device,
-        );
+        let attention =
+            MHSA::new(
+                embedding_dimension,
+                num_heads,
+                max_sequence_length,
+                device,
+            );
 
-    Self {
-        norm1,
-        attention,
-        norm2,
-        ffn,
+        let norm2 =
+            LayerNormConfig::new(embedding_dimension)
+                .init(device);
+
+        let ffn =
+            FFN::new(
+                embedding_dimension,
+                ffn_hidden_dimension,
+                embedding_dimension,
+                device,
+            );
+
+        Self {
+            norm1,
+            attention,
+            norm2,
+            ffn,
+        }
     }
-}
 
-pub fn forward(
-    &self,
-    input: Tensor<B, 3>,
-) -> Tensor<B, 3> {
-    let attention_input =
-        self.norm1.forward(
-            input.clone()
-        );
+    pub fn forward(
+        &self,
+        input: Tensor<B, 3>,
+        source_padding_mask: Option<Tensor<B, 2, Bool>>,
+    ) -> Tensor<B, 3> {
+        let attention_input =
+            self.norm1.forward(input.clone());
 
-    let attention_output =
-        self.attention.forward(
-            attention_input
-        );
+        let attention_output =
+            self.attention.forward(
+                attention_input,
+                source_padding_mask,
+            );
 
-    let x =
-        input + attention_output;
+        let x =
+            input + attention_output;
 
-    let ffn_input =
-        self.norm2.forward(
-            x.clone()
-        );
+        let ffn_input =
+            self.norm2.forward(x.clone());
 
-    let ffn_output =
-        self.ffn.forward(
-            ffn_input
-        );
+        let ffn_output =
+            self.ffn.forward(ffn_input);
 
-    x + ffn_output
-}
+        x + ffn_output
+    }
 
-pub fn embedding_dimension(&self) -> usize {
-    self.attention.embedding_dimension()
-}
+    pub fn embedding_dimension(&self) -> usize {
+        self.attention.embedding_dimension()
+    }
 
-pub fn num_heads(&self) -> usize {
-    self.attention.num_heads()
-}
-
+    pub fn num_heads(&self) -> usize {
+        self.attention.num_heads()
+    }
 }
