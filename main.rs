@@ -5,298 +5,362 @@ mod Attention;
 mod PositionalEncoding;
 mod Transformer;
 
+use std::path::Path;
+use std::time::Instant;
+
+use burn::backend::Autodiff;
+use burn::module::Module;
+use burn::nn::loss::CrossEntropyLossConfig;
+use burn::optim::{AdamWConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
-use burn_ndarray::NdArray;
+use burn::tensor::backend::Backend as BurnBackend;
+use burn_cuda::{Cuda, CudaDevice};
 
-use Tokenizer::batch::TranslationBatch;
-use Tokenizer::dataset::load_dataset;
-use Tokenizer::segmenter::{DocumentSegmenter, TokenCounter};
-use Tokenizer::tokenizer::Tokenizer as BpeTokenizer;
+use crate::Embedding::embedding::Embedding as TokenEmbedding;
+use crate::Tokenizer::batch::TranslationBatch;
+use crate::Tokenizer::dataset::load_dataset;
+use crate::Tokenizer::segmenter::{
+    DocumentSegmenter,
+    TranslationSegment,
+    WhitespaceTokenCounter,
+};
+use crate::Tokenizer::tokenizer::Tokenizer as BPETokenizer;
+use crate::Transformer::transformer::Transformer as TransformerModel;
 
-use Embedding::Embedding as EmbeddingLayer;
-use Transformer::transformer::Transformer as TransformerModel;
+type InnerBackend = Cuda<f32, i32>;
+type TrainBackend = Autodiff<InnerBackend>;
 
-type Backend = NdArray<f32>;
+const DATA_DIR: &str = "data";
 
-struct SourceTokenCounter<'a> {
-    tokenizer: &'a BpeTokenizer,
+const SOURCE_VOCAB_SIZE: usize = 186;
+const TARGET_VOCAB_SIZE: usize = 197;
+
+const EMBEDDING_DIMENSION: usize = 256;
+const NUM_HEADS: usize = 8;
+const FFN_HIDDEN_DIMENSION: usize = 1024;
+
+const NUM_ENCODER_LAYERS: usize = 4;
+const NUM_DECODER_LAYERS: usize = 4;
+
+const MAX_SOURCE_TOKENS: usize = 256;
+const MAX_TARGET_TOKENS: usize = 256;
+
+const BATCH_SIZE: usize = 2;
+const EPOCHS: usize = 10;
+
+const LEARNING_RATE: f64 = 0.0001;
+const WEIGHT_DECAY: f32 = 0.01;
+
+const VALIDATION_RATIO: f32 = 0.1;
+
+const CHECKPOINT_DIR: &str = "checkpoints";
+
+#[derive(Module, Debug)]
+struct TranslationModel<B: BurnBackend> {
+    source_embedding: TokenEmbedding<B>,
+    target_embedding: TokenEmbedding<B>,
+    transformer: TransformerModel<B>,
 }
 
-impl<'a> TokenCounter for SourceTokenCounter<'a> {
-    fn count(&self, text: &str) -> usize {
-        self.tokenizer.encode_source(text).len()
+impl<B: BurnBackend> TranslationModel<B> {
+    fn new(
+        source_vocab_size: usize,
+        target_vocab_size: usize,
+        embedding_dimension: usize,
+        num_encoder_layers: usize,
+        num_decoder_layers: usize,
+        num_heads: usize,
+        ffn_hidden_dimension: usize,
+        max_source_tokens: usize,
+        max_target_tokens: usize,
+        device: &B::Device,
+    ) -> Self {
+        let source_embedding =
+            TokenEmbedding::new(
+                source_vocab_size,
+                embedding_dimension,
+                device,
+            );
+
+        let target_embedding =
+            TokenEmbedding::new(
+                target_vocab_size,
+                embedding_dimension,
+                device,
+            );
+
+        let transformer = TransformerModel::new(
+            num_encoder_layers,
+            num_decoder_layers,
+            embedding_dimension,
+            num_heads,
+            ffn_hidden_dimension,
+            max_source_tokens,
+            max_target_tokens,
+            target_vocab_size,
+            device,
+        );
+
+        Self {
+            source_embedding,
+            target_embedding,
+            transformer,
+        }
+    }
+
+    fn forward(
+        &self,
+        source_ids: Tensor<B, 2, Int>,
+        target_input_ids: Tensor<B, 2, Int>,
+        source_padding_mask: Tensor<B, 2, Bool>,
+        target_padding_mask: Tensor<B, 2, Bool>,
+    ) -> Tensor<B, 3> {
+        let source_embeddings =
+            self.source_embedding.forward(source_ids);
+
+        let target_embeddings =
+            self.target_embedding.forward(target_input_ids);
+
+        self.transformer.forward(
+            source_embeddings,
+            target_embeddings,
+            Some(source_padding_mask),
+            Some(target_padding_mask),
+        )
     }
 }
 
-struct TargetTokenCounter<'a> {
-    tokenizer: &'a BpeTokenizer,
+fn create_int_tensor<B: BurnBackend>(
+    data: Vec<usize>,
+    shape: [usize; 2],
+    device: &B::Device,
+) -> Tensor<B, 2, Int> {
+    let data = data
+        .into_iter()
+        .map(|value| value as i64)
+        .collect::<Vec<_>>();
+
+    Tensor::<B, 2, Int>::from_data(
+        TensorData::new(data, Shape::new(shape)),
+        device,
+    )
 }
 
-impl<'a> TokenCounter for TargetTokenCounter<'a> {
-    fn count(&self, text: &str) -> usize {
-        self.tokenizer.encode_target_labels(text).len()
+fn batch_tensors<B: BurnBackend>(
+    batch: &TranslationBatch,
+    device: &B::Device,
+) -> (
+    Tensor<B, 2, Int>,
+    Tensor<B, 2, Int>,
+    Tensor<B, 2, Int>,
+    Tensor<B, 2, Bool>,
+    Tensor<B, 2, Bool>,
+) {
+    let source_ids = create_int_tensor(
+        batch.source_ids_flattened(),
+        batch.source_shape(),
+        device,
+    );
+
+    let target_input_ids = create_int_tensor(
+        batch.target_input_ids_flattened(),
+        batch.target_shape(),
+        device,
+    );
+
+    let target_label_ids = create_int_tensor(
+        batch.target_label_ids_flattened(),
+        batch.target_shape(),
+        device,
+    );
+
+    let source_padding_mask =
+        source_ids.clone().equal_elem(batch.pad_id as i64);
+
+    let target_padding_mask =
+        target_input_ids.clone().equal_elem(batch.pad_id as i64);
+
+    (
+        source_ids,
+        target_input_ids,
+        target_label_ids,
+        source_padding_mask,
+        target_padding_mask,
+    )
+}
+
+fn translation_loss<B: BurnBackend>(
+    logits: Tensor<B, 3>,
+    labels: Tensor<B, 2, Int>,
+    pad_id: usize,
+) -> Tensor<B, 1> {
+    let [batch_size, sequence_length, vocab_size] =
+        logits.shape().dims::<3>();
+
+    let logits =
+        logits.reshape([batch_size * sequence_length, vocab_size]);
+
+    let labels =
+        labels.reshape([batch_size * sequence_length]);
+
+    CrossEntropyLossConfig::new()
+        .with_pad_tokens(Some(vec![pad_id]))
+        .init(&logits.device())
+        .forward(logits, labels)
+}
+
+fn create_batches(
+    segments: &[TranslationSegment],
+    source_tokenizer: &BPETokenizer,
+    target_tokenizer: &BPETokenizer,
+    batch_size: usize,
+) -> Vec<TranslationBatch> {
+    segments
+        .chunks(batch_size)
+        .map(|chunk| {
+            TranslationBatch::from_segments(
+                chunk,
+                source_tokenizer,
+                target_tokenizer,
+            )
+        })
+        .collect()
+}
+
+fn split_dataset(
+    segments: &[TranslationSegment],
+    validation_ratio: f32,
+) -> (
+    Vec<TranslationSegment>,
+    Vec<TranslationSegment>,
+) {
+    let total = segments.len();
+
+    if total < 2 {
+        return (segments.to_vec(), Vec::new());
     }
+
+    let validation_size =
+        ((total as f32) * validation_ratio).round() as usize;
+
+    let validation_size =
+        validation_size.clamp(1, total - 1);
+
+    let split_index =
+        total - validation_size;
+
+    let train =
+        segments[..split_index].to_vec();
+
+    let validation =
+        segments[split_index..].to_vec();
+
+    (train, validation)
+}
+
+fn evaluate<B: BurnBackend>(
+    model: &TranslationModel<B>,
+    segments: &[TranslationSegment],
+    source_tokenizer: &BPETokenizer,
+    target_tokenizer: &BPETokenizer,
+    batch_size: usize,
+    device: &B::Device,
+) -> f64 {
+    if segments.is_empty() {
+        return 0.0;
+    }
+
+    let batches = create_batches(
+        segments,
+        source_tokenizer,
+        target_tokenizer,
+        batch_size,
+    );
+
+    let mut total_loss = 0.0;
+    let mut batch_count = 0usize;
+
+    for batch in batches {
+        let (
+            source_ids,
+            target_input_ids,
+            target_label_ids,
+            source_padding_mask,
+            target_padding_mask,
+        ) = batch_tensors::<B>(
+            &batch,
+            device,
+        );
+
+        let logits = model.forward(
+            source_ids,
+            target_input_ids,
+            source_padding_mask,
+            target_padding_mask,
+        );
+
+        let loss = translation_loss(
+            logits,
+            target_label_ids,
+            batch.pad_id,
+        );
+
+        let loss_value = loss
+            .into_data()
+            .convert::<f32>()
+            .to_vec::<f32>()
+            .expect(
+                "Validation loss tensor must contain one value",
+            )[0] as f64;
+
+        total_loss += loss_value;
+        batch_count += 1;
+    }
+
+    total_loss / batch_count as f64
 }
 
 fn main() {
-    println!("LOADING DATASET");
+    println!("Starting CUDA Transformer training");
 
-    let dataset = load_dataset("data")
-        .expect("Failed to load dataset");
+    let device = CudaDevice::default();
 
-    println!("Loaded {} translation pairs", dataset.len());
+    println!("CUDA device initialized");
 
-    if dataset.is_empty() {
-        panic!("Dataset is empty");
-    }
-
-    let source_texts: Vec<String> = dataset
-        .iter()
-        .map(|pair| pair.source.clone())
-        .collect();
-
-    let target_texts: Vec<String> = dataset
-        .iter()
-        .map(|pair| pair.target.clone())
-        .collect();
-
-    println!("Source training texts: {}", source_texts.len());
-    println!("Target training texts: {}", target_texts.len());
-
-    println!("\nCREATING SOURCE BPE TOKENIZER");
-
-    let mut source_tokenizer = BpeTokenizer::new(100);
-
-    println!("\nTRAINING SOURCE BPE TOKENIZER");
-
-    source_tokenizer.train(&source_texts);
+    let dataset =
+        load_dataset(DATA_DIR)
+            .expect("Failed to load translation dataset");
 
     println!(
-        "Source vocabulary size: {}",
-        source_tokenizer.vocab_size()
-    );
-
-    println!("\nCREATING TARGET BPE TOKENIZER");
-
-    let mut target_tokenizer = BpeTokenizer::new(100);
-
-    println!("\nTRAINING TARGET BPE TOKENIZER");
-
-    target_tokenizer.train(&target_texts);
-
-    println!(
-        "Target vocabulary size: {}",
-        target_tokenizer.vocab_size()
-    );
-
-    let max_encoder_sequence_length = 512;
-    let max_decoder_sequence_length = 512;
-
-    println!("\n================================================");
-    println!("DOCUMENT SEGMENTATION");
-    println!("================================================");
-
-    let source_counter = SourceTokenCounter {
-        tokenizer: &source_tokenizer,
-    };
-
-    let target_counter = TargetTokenCounter {
-        tokenizer: &target_tokenizer,
-    };
-
-    let segmenter = DocumentSegmenter::new(
-        max_encoder_sequence_length,
-        max_decoder_sequence_length,
-        source_counter,
-        target_counter,
-    );
-
-    let segments = segmenter.segment_dataset(&dataset);
-
-    println!(
-        "Original translation pairs: {}",
+        "Loaded {} translation pairs",
         dataset.len()
     );
 
-    println!(
-        "Generated translation segments: {}",
-        segments.len()
+
+    let mut source_tokenizer =
+        BPETokenizer::new(100);
+
+    let mut target_tokenizer =
+        BPETokenizer::new(100);
+
+    let source_texts = dataset
+        .iter()
+        .map(|pair| pair.source.clone())
+        .collect::<Vec<_>>();
+
+    let target_texts = dataset
+        .iter()
+        .map(|pair| pair.target.clone())
+        .collect::<Vec<_>>();
+
+    source_tokenizer.train(
+        &source_texts,
     );
 
-    if segments.is_empty() {
-        panic!("Segmentation produced no translation segments");
-    }
-
-    println!("\n================================================");
-    println!("SEGMENT TOKEN LENGTH DIAGNOSTICS");
-    println!("================================================");
-
-    let mut max_segment_source_tokens = 0usize;
-    let mut max_segment_target_tokens = 0usize;
-
-    let mut min_segment_source_tokens = usize::MAX;
-    let mut min_segment_target_tokens = usize::MAX;
-
-    let mut total_segment_source_tokens = 0usize;
-    let mut total_segment_target_tokens = 0usize;
-
-    let mut source_segments_over_limit = 0usize;
-    let mut target_segments_over_limit = 0usize;
-
-    for (index, segment) in segments.iter().enumerate() {
-        let source_tokens = source_tokenizer
-            .encode_source(&segment.source)
-            .len();
-
-        let target_tokens = target_tokenizer
-            .encode_target_labels(&segment.target)
-            .len();
-
-        max_segment_source_tokens =
-            max_segment_source_tokens.max(source_tokens);
-
-        max_segment_target_tokens =
-            max_segment_target_tokens.max(target_tokens);
-
-        min_segment_source_tokens =
-            min_segment_source_tokens.min(source_tokens);
-
-        min_segment_target_tokens =
-            min_segment_target_tokens.min(target_tokens);
-
-        total_segment_source_tokens += source_tokens;
-        total_segment_target_tokens += target_tokens;
-
-        if source_tokens > max_encoder_sequence_length {
-            source_segments_over_limit += 1;
-        }
-
-        if target_tokens > max_decoder_sequence_length {
-            target_segments_over_limit += 1;
-        }
-
-        if index < 20 {
-            println!(
-                "Segment {:>4}: source={:>4} tokens | target={:>4} tokens",
-                index + 1,
-                source_tokens,
-                target_tokens
-            );
-        }
-    }
-
-    let segment_count = segments.len();
-
-    let average_segment_source_tokens =
-        total_segment_source_tokens as f64 / segment_count as f64;
-
-    let average_segment_target_tokens =
-        total_segment_target_tokens as f64 / segment_count as f64;
-
-    println!("\n================================================");
-    println!("SEGMENT TOKEN SUMMARY");
-    println!("================================================");
-
-    println!("Segment count: {}", segment_count);
-
-    println!(
-        "Minimum source tokens: {}",
-        min_segment_source_tokens
+    target_tokenizer.train(
+        &target_texts,
     );
 
-    println!(
-        "Maximum source tokens: {}",
-        max_segment_source_tokens
-    );
-
-    println!(
-        "Average source tokens: {:.2}",
-        average_segment_source_tokens
-    );
-
-    println!(
-        "Minimum target tokens: {}",
-        min_segment_target_tokens
-    );
-
-    println!(
-        "Maximum target tokens: {}",
-        max_segment_target_tokens
-    );
-
-    println!(
-        "Average target tokens: {:.2}",
-        average_segment_target_tokens
-    );
-
-    println!(
-        "Source segments over {} tokens: {}",
-        max_encoder_sequence_length,
-        source_segments_over_limit
-    );
-
-    println!(
-        "Target segments over {} tokens: {}",
-        max_decoder_sequence_length,
-        target_segments_over_limit
-    );
-
-    assert_eq!(
-        source_segments_over_limit,
-        0,
-        "Some source segments exceed the encoder context length"
-    );
-
-    assert_eq!(
-        target_segments_over_limit,
-        0,
-        "Some target segments exceed the decoder context length"
-    );
-
-    println!("\n================================================");
-    println!("CREATING TRANSLATION BATCH");
-    println!("================================================");
-
-    let batch_size = segments.len().min(8);
-
-    let batch = TranslationBatch::from_segments(
-        &segments[..batch_size],
-        &source_tokenizer,
-        &target_tokenizer,
-    );
-
-    batch.assert_within_context(
-        max_encoder_sequence_length,
-        max_decoder_sequence_length,
-    );
-
-    println!("Batch size: {}", batch.batch_size());
-    println!("Source shape: {:?}", batch.source_shape());
-    println!("Target shape: {:?}", batch.target_shape());
-
-    println!(
-        "Maximum source length: {}",
-        batch.max_source_length
-    );
-
-    println!(
-        "Maximum target length: {}",
-        batch.max_target_length
-    );
-
-    let device = Default::default();
-
-    println!("\n================================================");
-    println!("CREATING SOURCE EMBEDDING");
-    println!("================================================");
-
-    let source_embedding_dimension = 128;
-
-    let source_embedding = EmbeddingLayer::<Backend>::new(
-        source_tokenizer.vocab_size(),
-        source_embedding_dimension,
-        &device,
-    );
 
     println!(
         "Source vocabulary size: {}",
@@ -304,224 +368,236 @@ fn main() {
     );
 
     println!(
-        "Source embedding dimension: {}",
-        source_embedding_dimension
-    );
-
-    println!("\n================================================");
-    println!("CREATING TARGET EMBEDDING");
-    println!("================================================");
-
-    let target_embedding_dimension = 128;
-
-    let target_embedding = EmbeddingLayer::<Backend>::new(
-        target_tokenizer.vocab_size(),
-        target_embedding_dimension,
-        &device,
-    );
-
-    println!(
         "Target vocabulary size: {}",
         target_tokenizer.vocab_size()
     );
 
-    println!(
-        "Target embedding dimension: {}",
-        target_embedding_dimension
+    assert_eq!(
+        source_tokenizer.vocab_size(),
+        SOURCE_VOCAB_SIZE,
+        "Source tokenizer vocabulary size does not match configured SOURCE_VOCAB_SIZE"
     );
 
     assert_eq!(
-        source_embedding_dimension,
-        target_embedding_dimension,
-        "Source and target embedding dimensions must match"
-    );
-
-    println!("\n================================================");
-    println!("CREATING TRANSFORMER");
-    println!("================================================");
-
-    let transformer = TransformerModel::<Backend>::new(
-        6,
-        6,
-        source_embedding_dimension,
-        8,
-        512,
-        max_encoder_sequence_length,
-        max_decoder_sequence_length,
         target_tokenizer.vocab_size(),
-        &device,
+        TARGET_VOCAB_SIZE,
+        "Target tokenizer vocabulary size does not match configured TARGET_VOCAB_SIZE"
+    );
+
+    let segmenter =
+        DocumentSegmenter::new(
+            MAX_SOURCE_TOKENS,
+            MAX_TARGET_TOKENS,
+            WhitespaceTokenCounter,
+            WhitespaceTokenCounter,
+        );
+
+    let segments =
+        segmenter.segment_dataset(&dataset);
+
+    println!(
+        "Created {} training segments",
+        segments.len()
+    );
+
+    let (
+        train_segments,
+        validation_segments,
+    ) = split_dataset(
+        &segments,
+        VALIDATION_RATIO,
     );
 
     println!(
-        "Encoder layers: {}",
-        transformer.num_encoder_layers
+        "Training segments: {}",
+        train_segments.len()
     );
 
     println!(
-        "Decoder layers: {}",
-        transformer.num_decoder_layers
+        "Validation segments: {}",
+        validation_segments.len()
+    );
+
+    let train_batches =
+        create_batches(
+            &train_segments,
+            &source_tokenizer,
+            &target_tokenizer,
+            BATCH_SIZE,
+        );
+
+    println!(
+        "Training batches: {}",
+        train_batches.len()
+    );
+
+    let max_source_length =
+        train_batches
+            .iter()
+            .map(|batch| batch.max_source_length)
+            .max()
+            .unwrap_or(0);
+
+    let max_target_length =
+        train_batches
+            .iter()
+            .map(|batch| batch.max_target_length)
+            .max()
+            .unwrap_or(0);
+
+    println!(
+        "Maximum source sequence in batches: {}",
+        max_source_length
     );
 
     println!(
-        "Embedding dimension: {}",
-        transformer.embedding_dimension
+        "Maximum target sequence in batches: {}",
+        max_target_length
     );
 
-    println!(
-        "Attention heads: {}",
-        transformer.num_heads
-    );
-
-    println!(
-        "FFN hidden dimension: {}",
-        transformer.ffn_hidden_dimension
-    );
-
-    println!(
-        "Maximum encoder sequence length: {}",
-        transformer.max_encoder_sequence_length
-    );
-
-    println!(
-        "Maximum decoder sequence length: {}",
-        transformer.max_decoder_sequence_length
-    );
-
-    println!(
-        "Target vocabulary size: {}",
-        transformer.target_vocab_size
-    );
-
-    println!("\n================================================");
-    println!("CREATING INPUT TENSORS");
-    println!("================================================");
-
-    let source_ids = batch.source_ids_flattened();
-    let target_input_ids = batch.target_input_ids_flattened();
-
-    let source_ids_i64: Vec<i64> = source_ids
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
-
-    let target_input_ids_i64: Vec<i64> = target_input_ids
-        .iter()
-        .map(|&id| id as i64)
-        .collect();
-
-    let source_tensor =
-        Tensor::<Backend, 1, Int>::from_ints(
-            source_ids_i64.as_slice(),
+    let mut model =
+        TranslationModel::<TrainBackend>::new(
+            source_tokenizer.vocab_size(),
+            target_tokenizer.vocab_size(),
+            EMBEDDING_DIMENSION,
+            NUM_ENCODER_LAYERS,
+            NUM_DECODER_LAYERS,
+            NUM_HEADS,
+            FFN_HIDDEN_DIMENSION,
+            MAX_SOURCE_TOKENS,
+            MAX_TARGET_TOKENS,
             &device,
-        )
-        .reshape([
-            batch.batch_size(),
-            batch.max_source_length,
-        ]);
+        );
 
-    let target_tensor =
-        Tensor::<Backend, 1, Int>::from_ints(
-            target_input_ids_i64.as_slice(),
-            &device,
-        )
-        .reshape([
-            batch.batch_size(),
-            batch.max_target_length,
-        ]);
+    let mut optimizer =
+        AdamWConfig::new()
+            .with_weight_decay(WEIGHT_DECAY)
+            .init::<
+                TrainBackend,
+                TranslationModel<TrainBackend>,
+            >();
 
-    println!(
-        "Source tensor shape: {:?}",
-        source_tensor.shape()
+    std::fs::create_dir_all(
+        Path::new(CHECKPOINT_DIR),
+    )
+    .expect(
+        "Failed to create checkpoint directory",
     );
 
-    println!(
-        "Target tensor shape: {:?}",
-        target_tensor.shape()
-    );
+    println!("Model initialized on CUDA");
 
-    println!("\n================================================");
-    println!("CREATING PADDING MASKS");
-    println!("================================================");
+    for epoch in 1..=EPOCHS {
+        let epoch_start =
+            Instant::now();
 
-    let source_padding_values = batch
-        .source_padding_mask()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<bool>>();
+        let mut epoch_loss =
+            0.0;
 
-    let target_padding_values = batch
-        .target_padding_mask()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<bool>>();
+        let mut batch_count =
+            0usize;
 
-    let source_padding_mask =
-        Tensor::<Backend, 1, Bool>::from_bool(
-            source_padding_values.as_slice().into(),
-            &device,
-        )
-        .reshape([
-            batch.batch_size(),
-            batch.max_source_length,
-        ]);
+        for batch in &train_batches {
+            let (
+                source_ids,
+                target_input_ids,
+                target_label_ids,
+                source_padding_mask,
+                target_padding_mask,
+            ) = batch_tensors::<TrainBackend>(
+                batch,
+                &device,
+            );
 
-    let target_padding_mask =
-        Tensor::<Backend, 1, Bool>::from_bool(
-            target_padding_values.as_slice().into(),
-            &device,
-        )
-        .reshape([
-            batch.batch_size(),
-            batch.max_target_length,
-        ]);
+            let logits =
+                model.forward(
+                    source_ids,
+                    target_input_ids,
+                    source_padding_mask,
+                    target_padding_mask,
+                );
 
-    println!(
-        "Source padding mask shape: {:?}",
-        source_padding_mask.shape()
-    );
+            let loss =
+                translation_loss(
+                    logits,
+                    target_label_ids,
+                    batch.pad_id,
+                );
 
-    println!(
-        "Target padding mask shape: {:?}",
-        target_padding_mask.shape()
-    );
+            let loss_value =
+                loss.clone()
+                    .into_data()
+                    .convert::<f32>()
+                    .to_vec::<f32>()
+                    .expect(
+                        "Training loss tensor must contain one value",
+                    )[0] as f64;
 
-    println!("\n================================================");
-    println!("CREATING EMBEDDINGS");
-    println!("================================================");
+            let grads =
+                loss.backward();
 
-    let source_embeddings =
-        source_embedding.forward(source_tensor);
+            let grads =
+                GradientsParams::from_grads(
+                    grads,
+                    &model,
+                );
 
-    let target_embeddings =
-        target_embedding.forward(target_tensor);
+            model =
+                optimizer.step(
+                    LEARNING_RATE,
+                    model,
+                    grads,
+                );
 
-    println!(
-        "Source embeddings shape: {:?}",
-        source_embeddings.shape()
-    );
+            epoch_loss +=
+                loss_value;
 
-    println!(
-        "Target embeddings shape: {:?}",
-        target_embeddings.shape()
-    );
+            batch_count +=
+                1;
 
-    println!("\n================================================");
-    println!("RUNNING TRANSFORMER");
-    println!("================================================");
+            if batch_count % 10 == 0
+                || batch_count == train_batches.len()
+            {
+                let average_loss =
+                    epoch_loss
+                        / batch_count
+                            .max(1)
+                            as f64;
 
-    let output = transformer.forward(
-        source_embeddings,
-        target_embeddings,
-        Some(source_padding_mask),
-        Some(target_padding_mask),
-    );
+                println!(
+                    "Epoch {}/{} | Batch {}/{} | Loss {:.6}",
+                    epoch,
+                    EPOCHS,
+                    batch_count,
+                    train_batches.len(),
+                    average_loss
+                );
+            }
+        }
 
-    println!(
-        "Transformer output shape: {:?}",
-        output.shape()
-    );
+        let train_loss =
+            epoch_loss
+                / batch_count.max(1)
+                    as f64;
 
-    println!("\n================================================");
-    println!("PIPELINE COMPLETE");
-    println!("================================================");
+        let validation_loss =
+            evaluate(
+                &model,
+                &validation_segments,
+                &source_tokenizer,
+                &target_tokenizer,
+                BATCH_SIZE,
+                &device,
+            );
+
+        println!(
+            "Epoch {}/{} complete | train_loss {:.6} | validation_loss {:.6} | time {:.2}s",
+            epoch,
+            EPOCHS,
+            train_loss,
+            validation_loss,
+            epoch_start.elapsed().as_secs_f64()
+        );
+    }
+
+    println!("Training complete");
 }
