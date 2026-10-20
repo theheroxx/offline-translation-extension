@@ -25,3 +25,4 @@ cargo build
 cargo run
 
 The program initializes the CUDA device and starts the Transformer training pipeline.
+Implemnation of the inference engine as a Chrome/Edge extention is about to come. 
