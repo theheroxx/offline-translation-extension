@@ -1,5 +1,5 @@
-
 use crate::Tokenizer::dataset::TranslationPair;
+use crate::Tokenizer::tokenizer::Tokenizer;
 
 #[derive(Debug, Clone)]
 pub struct TranslationSegment {
@@ -9,6 +9,46 @@ pub struct TranslationSegment {
 
 pub trait TokenCounter {
     fn count(&self, text: &str) -> usize;
+}
+
+#[derive(Clone, Copy)]
+pub enum TokenSequenceType {
+    Source,
+    Target,
+}
+
+pub struct BpeTokenCounter<'a> {
+    tokenizer: &'a Tokenizer,
+    sequence_type: TokenSequenceType,
+}
+
+impl<'a> BpeTokenCounter<'a> {
+    pub fn source(tokenizer: &'a Tokenizer) -> Self {
+        Self {
+            tokenizer,
+            sequence_type: TokenSequenceType::Source,
+        }
+    }
+
+    pub fn target(tokenizer: &'a Tokenizer) -> Self {
+        Self {
+            tokenizer,
+            sequence_type: TokenSequenceType::Target,
+        }
+    }
+}
+
+impl TokenCounter for BpeTokenCounter<'_> {
+    fn count(&self, text: &str) -> usize {
+        match self.sequence_type {
+            TokenSequenceType::Source => {
+                self.tokenizer.encode_source(text).len()
+            }
+            TokenSequenceType::Target => {
+                self.tokenizer.encode_target_input(text).len()
+            }
+        }
+    }
 }
 
 pub struct WhitespaceTokenCounter;
@@ -59,83 +99,71 @@ where
         }
     }
 
-    pub fn segment_pair(&self, pair: &TranslationPair) -> Vec<TranslationSegment> {
-        let source_paragraphs = split_paragraphs(&pair.source);
-        let target_paragraphs = split_paragraphs(&pair.target);
-
-        assert_eq!(
-            source_paragraphs.len(),
-            target_paragraphs.len(),
-            "Source and target paragraph counts must match (source={}, target={})",
-            source_paragraphs.len(),
-            target_paragraphs.len()
-        );
-
-        let mut segments = Vec::new();
-
-        for (source_paragraph, target_paragraph) in
-            source_paragraphs.iter().zip(target_paragraphs.iter())
-        {
-            self.segment_paragraph(
-                source_paragraph,
-                target_paragraph,
-                &mut segments,
-            );
-        }
-
-        segments
+    pub fn segment_pair(
+        &self,
+        pair: &TranslationPair,
+    ) -> Vec<TranslationSegment> {
+        self.segment_pair_checked(pair)
+            .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn segment_paragraph(
+    pub fn segment_pair_checked(
         &self,
-        source_paragraph: &str,
-        target_paragraph: &str,
-        out: &mut Vec<TranslationSegment>,
-    ) {
-        let source_tokens = self.source_token_counter.count(source_paragraph);
-        let target_tokens = self.target_token_counter.count(target_paragraph);
+        pair: &TranslationPair,
+    ) -> Result<Vec<TranslationSegment>, String> {
+        let source = pair.source.trim();
+        let target = pair.target.trim();
+
+        if source.is_empty() || target.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let source_tokens = self.source_token_counter.count(source);
+        let target_tokens = self.target_token_counter.count(target);
 
         if source_tokens <= self.max_source_tokens
             && target_tokens <= self.max_target_tokens
         {
-            push_segment(
-                source_paragraph,
-                target_paragraph,
-                out,
-            );
-            return;
+            return Ok(vec![TranslationSegment {
+                source: source.to_string(),
+                target: target.to_string(),
+            }]);
         }
 
-        let source_sentences = split_sentences(source_paragraph);
-        let target_sentences = split_sentences(target_paragraph);
+        let source_sentences = split_sentences(source);
+        let target_sentences = split_sentences(target);
 
-        if source_sentences.len() == target_sentences.len() {
-            self.chunk_aligned_sentences(
-                &source_sentences,
-                &target_sentences,
-                out,
-            );
-            return;
+        if source_sentences.len() != target_sentences.len() {
+            return Err(format!(
+                "Cannot safely segment translation pair: source and target sentence counts differ. Source sentences: {}, target sentences: {}, source tokens: {}, target tokens: {}, source limit: {}, target limit: {}",
+                source_sentences.len(),
+                target_sentences.len(),
+                source_tokens,
+                target_tokens,
+                self.max_source_tokens,
+                self.max_target_tokens
+            ));
         }
 
-        self.handle_unaligned_paragraph(
-            source_paragraph,
-            target_paragraph,
-            out,
-        );
+        self.chunk_aligned_sentences(
+            &source_sentences,
+            &target_sentences,
+        )
     }
 
     fn chunk_aligned_sentences(
         &self,
         source_sentences: &[String],
         target_sentences: &[String],
-        out: &mut Vec<TranslationSegment>,
-    ) {
+    ) -> Result<Vec<TranslationSegment>, String> {
+        let mut segments = Vec::new();
         let mut source_buffer = String::new();
         let mut target_buffer = String::new();
 
-        for (source_sentence, target_sentence) in
-            source_sentences.iter().zip(target_sentences.iter())
+        for (index, (source_sentence, target_sentence)) in source_sentences
+            .iter()
+            .zip(target_sentences.iter())
+            .enumerate()
         {
             let source_sentence_tokens =
                 self.source_token_counter.count(source_sentence);
@@ -146,22 +174,14 @@ where
             if source_sentence_tokens > self.max_source_tokens
                 || target_sentence_tokens > self.max_target_tokens
             {
-                push_segment(
-                    &source_buffer,
-                    &target_buffer,
-                    out,
-                );
-
-                source_buffer.clear();
-                target_buffer.clear();
-
-                self.split_aligned_oversized_sentence(
-                    source_sentence,
-                    target_sentence,
-                    out,
-                );
-
-                continue;
+                return Err(format!(
+                    "Cannot safely segment oversized sentence pair at position {}. Source tokens: {}, target tokens: {}, source limit: {}, target limit: {}. The sentence pair must be split using a reliable alignment method or excluded.",
+                    index + 1,
+                    source_sentence_tokens,
+                    target_sentence_tokens,
+                    self.max_source_tokens,
+                    self.max_target_tokens
+                ));
             }
 
             let source_candidate =
@@ -184,7 +204,7 @@ where
                 push_segment(
                     &source_buffer,
                     &target_buffer,
-                    out,
+                    &mut segments,
                 );
 
                 source_buffer = source_sentence.clone();
@@ -198,161 +218,41 @@ where
         push_segment(
             &source_buffer,
             &target_buffer,
-            out,
+            &mut segments,
         );
-    }
 
-    fn split_aligned_oversized_sentence(
-        &self,
-        source_sentence: &str,
-        target_sentence: &str,
-        out: &mut Vec<TranslationSegment>,
-    ) {
-        let source_words: Vec<&str> =
-            source_sentence.split_whitespace().collect();
-
-        let target_words: Vec<&str> =
-            target_sentence.split_whitespace().collect();
-
-        if source_words.is_empty() || target_words.is_empty() {
-            return;
-        }
-
-        let source_ratio =
-            source_words.len() as f64 / target_words.len() as f64;
-
-        let mut source_start = 0usize;
-        let mut target_start = 0usize;
-
-        while source_start < source_words.len()
-            || target_start < target_words.len()
-        {
-            let remaining_source =
-                source_words.len().saturating_sub(source_start);
-
-            let remaining_target =
-                target_words.len().saturating_sub(target_start);
-
-            if remaining_source == 0 || remaining_target == 0 {
-                let source =
-                    source_words[source_start..].join(" ");
-
-                let target =
-                    target_words[target_start..].join(" ");
-
-                if !source.is_empty() && !target.is_empty() {
-                    push_segment(&source, &target, out);
-                }
-
-                break;
-            }
-
-            let mut source_end =
-                (source_start + self.max_source_tokens)
-                    .min(source_words.len());
-
-            let estimated_target_end =
-                target_start
-                    + ((source_end - source_start) as f64 / source_ratio)
-                        .ceil() as usize;
-
-            let mut target_end =
-                estimated_target_end.min(target_words.len());
-
-            loop {
-                let source =
-                    source_words[source_start..source_end].join(" ");
-
-                let target =
-                    target_words[target_start..target_end].join(" ");
-
-                let source_fits =
-                    self.source_token_counter.count(&source)
-                        <= self.max_source_tokens;
-
-                let target_fits =
-                    self.target_token_counter.count(&target)
-                        <= self.max_target_tokens;
-
-                if source_fits && target_fits {
-                    push_segment(&source, &target, out);
-
-                    source_start = source_end;
-                    target_start = target_end;
-
-                    break;
-                }
-
-                if source_end > source_start + 1 {
-                    source_end -= 1;
-                    continue;
-                }
-
-                if target_end > target_start + 1 {
-                    target_end -= 1;
-                    continue;
-                }
-
-                let source =
-                    source_words[source_start..source_end].join(" ");
-
-                let target =
-                    target_words[target_start..target_end].join(" ");
-
-                push_segment(&source, &target, out);
-
-                source_start = source_end;
-                target_start = target_end;
-
-                break;
-            }
-        }
-    }
-
-    fn handle_unaligned_paragraph(
-        &self,
-        source_paragraph: &str,
-        target_paragraph: &str,
-        out: &mut Vec<TranslationSegment>,
-    ) {
-        let source_tokens =
-            self.source_token_counter.count(source_paragraph);
-
-        let target_tokens =
-            self.target_token_counter.count(target_paragraph);
-
-        if source_tokens <= self.max_source_tokens
-            && target_tokens <= self.max_target_tokens
-        {
-            push_segment(
-                source_paragraph,
-                target_paragraph,
-                out,
-            );
-            return;
-        }
-
-        panic!(
-            "Cannot safely segment an oversized paragraph because source and target sentence boundaries do not align. \
-             Source tokens: {}, target tokens: {}, max source: {}, max target: {}",
-            source_tokens,
-            target_tokens,
-            self.max_source_tokens,
-            self.max_target_tokens
-        );
+        Ok(segments)
     }
 
     pub fn segment_dataset(
         &self,
         dataset: &[TranslationPair],
     ) -> Vec<TranslationSegment> {
+        self.segment_dataset_checked(dataset)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn segment_dataset_checked(
+        &self,
+        dataset: &[TranslationPair],
+    ) -> Result<Vec<TranslationSegment>, String> {
         let mut segments = Vec::new();
 
-        for pair in dataset {
-            segments.extend(self.segment_pair(pair));
+        for (index, pair) in dataset.iter().enumerate() {
+            let pair_segments = self
+                .segment_pair_checked(pair)
+                .map_err(|error| {
+                    format!(
+                        "Failed to segment dataset pair {}: {}",
+                        index + 1,
+                        error
+                    )
+                })?;
+
+            segments.extend(pair_segments);
         }
 
-        segments
+        Ok(segments)
     }
 
     pub fn max_source_tokens(&self) -> usize {
@@ -393,14 +293,6 @@ fn push_segment(
     });
 }
 
-fn split_paragraphs(text: &str) -> Vec<String> {
-    text.split("\n\n")
-        .map(str::trim)
-        .filter(|paragraph| !paragraph.is_empty())
-        .map(String::from)
-        .collect()
-}
-
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
@@ -413,35 +305,41 @@ fn split_sentences(text: &str) -> Vec<String> {
 
         current.push(character);
 
-        if matches!(
+        if !matches!(
             character,
             '.' | '!' | '?' | '؟' | '۔' | '…'
         ) {
-            let next = chars.get(i + 1).copied();
+            continue;
+        }
 
-            let continuation =
-                matches!(
-                    next,
-                    Some('.') | Some('!') | Some('?') | Some('…')
-                );
+        let next = chars.get(i + 1).copied();
 
-            let decimal =
-                character == '.'
-                    && i > 0
-                    && i + 1 < len
-                    && chars[i - 1].is_ascii_digit()
-                    && chars[i + 1].is_ascii_digit();
+        let continuation = matches!(
+            next,
+            Some('.') | Some('!') | Some('?') | Some('…')
+        );
 
-            if continuation || decimal {
-                continue;
-            }
+        let decimal = character == '.'
+            && i > 0
+            && i + 1 < len
+            && chars[i - 1].is_ascii_digit()
+            && chars[i + 1].is_ascii_digit();
 
-            let sentence = current.trim();
+        let abbreviation = character == '.'
+            && i > 0
+            && i + 1 < len
+            && chars[i - 1].is_ascii_alphabetic()
+            && chars[i + 1].is_ascii_alphabetic();
 
-            if !sentence.is_empty() {
-                sentences.push(sentence.to_string());
-                current.clear();
-            }
+        if continuation || decimal || abbreviation {
+            continue;
+        }
+
+        let sentence = current.trim();
+
+        if !sentence.is_empty() {
+            sentences.push(sentence.to_string());
+            current.clear();
         }
     }
 
@@ -464,4 +362,3 @@ fn append_text(
         format!("{current} {next}")
     }
 }
-

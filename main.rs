@@ -20,9 +20,9 @@ use crate::Embedding::embedding::Embedding as TokenEmbedding;
 use crate::Tokenizer::batch::TranslationBatch;
 use crate::Tokenizer::dataset::load_dataset;
 use crate::Tokenizer::segmenter::{
+    BpeTokenCounter,
     DocumentSegmenter,
     TranslationSegment,
-    WhitespaceTokenCounter,
 };
 use crate::Tokenizer::tokenizer::Tokenizer as BPETokenizer;
 use crate::Transformer::transformer::Transformer as TransformerModel;
@@ -384,16 +384,16 @@ fn main() {
         "Target tokenizer vocabulary size does not match configured TARGET_VOCAB_SIZE"
     );
 
-    let segmenter =
-        DocumentSegmenter::new(
-            MAX_SOURCE_TOKENS,
-            MAX_TARGET_TOKENS,
-            WhitespaceTokenCounter,
-            WhitespaceTokenCounter,
-        );
+    let segmenter = DocumentSegmenter::new(
+        MAX_SOURCE_TOKENS,
+        MAX_TARGET_TOKENS,
+        BpeTokenCounter::source(&source_tokenizer),
+        BpeTokenCounter::target(&target_tokenizer),
+    );
 
-    let segments =
-        segmenter.segment_dataset(&dataset);
+    let segments = segmenter
+        .segment_dataset_checked(&dataset)
+        .expect("Failed to segment translation dataset");
 
     println!(
         "Created {} training segments",
