@@ -1,4 +1,3 @@
-
 use crate::Tokenizer::segmenter::TranslationSegment;
 use crate::Tokenizer::tokenizer::Tokenizer;
 
@@ -20,10 +19,7 @@ impl TranslationBatch {
         source_tokenizer: &Tokenizer,
         target_tokenizer: &Tokenizer,
     ) -> Self {
-        assert!(
-            !segments.is_empty(),
-            "Translation batch cannot be empty"
-        );
+        assert!(!segments.is_empty(), "Translation batch cannot be empty");
 
         let pad_id = source_tokenizer.pad_id();
 
@@ -44,14 +40,11 @@ impl TranslationBatch {
         let mut max_target_length = 0;
 
         for segment in segments {
-            let source =
-                source_tokenizer.encode_source(&segment.source);
+            let source = source_tokenizer.encode_source(&segment.source);
 
-            let target_input =
-                target_tokenizer.encode_target_input(&segment.target);
+            let target_input = target_tokenizer.encode_target_input(&segment.target);
 
-            let target_labels =
-                target_tokenizer.encode_target_labels(&segment.target);
+            let target_labels = target_tokenizer.encode_target_labels(&segment.target);
 
             assert_eq!(
                 target_input.len(),
@@ -62,11 +55,9 @@ impl TranslationBatch {
             let source_length = source.len();
             let target_length = target_input.len();
 
-            max_source_length =
-                max_source_length.max(source_length);
+            max_source_length = max_source_length.max(source_length);
 
-            max_target_length =
-                max_target_length.max(target_length);
+            max_target_length = max_target_length.max(target_length);
 
             source_lengths.push(source_length);
             target_lengths.push(target_length);
@@ -77,24 +68,15 @@ impl TranslationBatch {
         }
 
         for sequence in &mut source_ids {
-            sequence.resize(
-                max_source_length,
-                pad_id,
-            );
+            sequence.resize(max_source_length, pad_id);
         }
 
         for sequence in &mut target_input_ids {
-            sequence.resize(
-                max_target_length,
-                pad_id,
-            );
+            sequence.resize(max_target_length, pad_id);
         }
 
         for sequence in &mut target_label_ids {
-            sequence.resize(
-                max_target_length,
-                pad_id,
-            );
+            sequence.resize(max_target_length, pad_id);
         }
 
         Self {
@@ -114,17 +96,11 @@ impl TranslationBatch {
     }
 
     pub fn source_shape(&self) -> [usize; 2] {
-        [
-            self.batch_size(),
-            self.max_source_length,
-        ]
+        [self.batch_size(), self.max_source_length]
     }
 
     pub fn target_shape(&self) -> [usize; 2] {
-        [
-            self.batch_size(),
-            self.max_target_length,
-        ]
+        [self.batch_size(), self.max_target_length]
     }
 
     pub fn source_padding_mask(&self) -> Vec<Vec<bool>> {
@@ -184,11 +160,7 @@ impl TranslationBatch {
             .collect()
     }
 
-    pub fn assert_within_context(
-        &self,
-        max_source_tokens: usize,
-        max_target_tokens: usize,
-    ) {
+    pub fn assert_within_context(&self, max_source_tokens: usize, max_target_tokens: usize) {
         assert!(
             self.max_source_length <= max_source_tokens,
             "Batch source sequence length ({}) exceeds maximum encoder sequence length ({})",
@@ -204,4 +176,3 @@ impl TranslationBatch {
         );
     }
 }
-

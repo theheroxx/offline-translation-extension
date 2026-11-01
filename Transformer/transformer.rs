@@ -1,4 +1,3 @@
-
 use burn::module::Module;
 use burn::prelude::*;
 
@@ -78,43 +77,32 @@ impl<B: Backend> Transformer<B> {
             "Embedding dimension must be divisible by number of attention heads"
         );
 
-        let mut encoder_layers =
-            Vec::with_capacity(num_encoder_layers);
+        let mut encoder_layers = Vec::with_capacity(num_encoder_layers);
 
         for _ in 0..num_encoder_layers {
-            encoder_layers.push(
-                EncoderBlock::new(
-                    embedding_dimension,
-                    num_heads,
-                    ffn_hidden_dimension,
-                    max_encoder_sequence_length,
-                    device,
-                )
-            );
+            encoder_layers.push(EncoderBlock::new(
+                embedding_dimension,
+                num_heads,
+                ffn_hidden_dimension,
+                max_encoder_sequence_length,
+                device,
+            ));
         }
 
-        let mut decoder_layers =
-            Vec::with_capacity(num_decoder_layers);
+        let mut decoder_layers = Vec::with_capacity(num_decoder_layers);
 
         for _ in 0..num_decoder_layers {
-            decoder_layers.push(
-                DecoderBlock::new(
-                    embedding_dimension,
-                    num_heads,
-                    ffn_hidden_dimension,
-                    max_encoder_sequence_length,
-                    max_decoder_sequence_length,
-                    device,
-                )
-            );
+            decoder_layers.push(DecoderBlock::new(
+                embedding_dimension,
+                num_heads,
+                ffn_hidden_dimension,
+                max_encoder_sequence_length,
+                max_decoder_sequence_length,
+                device,
+            ));
         }
 
-        let lm_head =
-            LMHead::new(
-                embedding_dimension,
-                target_vocab_size,
-                device,
-            );
+        let lm_head = LMHead::new(embedding_dimension, target_vocab_size, device);
 
         Self {
             encoder_layers,
@@ -139,10 +127,7 @@ impl<B: Backend> Transformer<B> {
         let mut output = input;
 
         for layer in &self.encoder_layers {
-            output = layer.forward(
-                output,
-                source_padding_mask.clone(),
-            );
+            output = layer.forward(output, source_padding_mask.clone());
         }
 
         output
@@ -176,23 +161,16 @@ impl<B: Backend> Transformer<B> {
         source_padding_mask: Option<Tensor<B, 2, Bool>>,
         target_padding_mask: Option<Tensor<B, 2, Bool>>,
     ) -> Tensor<B, 3> {
-        let encoder_output =
-            self.encode(
-                source,
-                source_padding_mask.clone(),
-            );
+        let encoder_output = self.encode(source, source_padding_mask.clone());
 
-        let decoder_output =
-            self.decode(
-                target,
-                encoder_output,
-                target_padding_mask,
-                source_padding_mask,
-            );
+        let decoder_output = self.decode(
+            target,
+            encoder_output,
+            target_padding_mask,
+            source_padding_mask,
+        );
 
-        self.lm_head.forward(
-            decoder_output
-        )
+        self.lm_head.forward(decoder_output)
     }
 
     pub fn embedding_dimension(&self) -> usize {
@@ -227,4 +205,3 @@ impl<B: Backend> Transformer<B> {
         self.target_vocab_size
     }
 }
-

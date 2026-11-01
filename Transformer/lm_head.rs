@@ -1,4 +1,3 @@
-
 use burn::module::Module;
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
@@ -11,11 +10,7 @@ pub struct LMHead<B: Backend> {
 }
 
 impl<B: Backend> LMHead<B> {
-    pub fn new(
-        embedding_dimension: usize,
-        target_vocab_size: usize,
-        device: &B::Device,
-    ) -> Self {
+    pub fn new(embedding_dimension: usize, target_vocab_size: usize, device: &B::Device) -> Self {
         assert!(
             embedding_dimension > 0,
             "Embedding dimension must be greater than zero"
@@ -26,9 +21,7 @@ impl<B: Backend> LMHead<B> {
             "Target vocabulary size must be greater than zero"
         );
 
-        let linear =
-            LinearConfig::new(embedding_dimension, target_vocab_size)
-                .init(device);
+        let linear = LinearConfig::new(embedding_dimension, target_vocab_size).init(device);
 
         Self {
             linear,
@@ -41,8 +34,7 @@ impl<B: Backend> LMHead<B> {
         let [_, _, embedding_dimension] = input.shape().dims::<3>();
 
         assert_eq!(
-            embedding_dimension,
-            self.embedding_dimension,
+            embedding_dimension, self.embedding_dimension,
             "LM Head input dimension does not match embedding dimension"
         );
 

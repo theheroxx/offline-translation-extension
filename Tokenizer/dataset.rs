@@ -8,10 +8,7 @@ pub struct TranslationPair {
     pub target: String,
 }
 
-
-pub fn load_dataset<P: AsRef<Path>>(
-    data_dir: P,
-) -> io::Result<Vec<TranslationPair>> {
+pub fn load_dataset<P: AsRef<Path>>(data_dir: P) -> io::Result<Vec<TranslationPair>> {
     let data_dir = data_dir.as_ref();
 
     let mut pairs = Vec::new();

@@ -60,8 +60,7 @@ impl Tokenizer {
 
         self.add_special_tokens();
 
-        let mut word_frequencies: HashMap<Vec<String>, usize> =
-            HashMap::new();
+        let mut word_frequencies: HashMap<Vec<String>, usize> = HashMap::new();
 
         for text in texts {
             for word in text.split_whitespace() {
@@ -101,9 +100,10 @@ impl Tokenizer {
                 break;
             }
 
-            let best_pair = match pair_counts.iter().max_by(|a, b| {
-                a.1.cmp(b.1).then_with(|| b.0.cmp(a.0))
-            }) {
+            let best_pair = match pair_counts
+                .iter()
+                .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+            {
                 Some((pair, _)) => pair.clone(),
                 None => break,
             };
@@ -114,15 +114,10 @@ impl Tokenizer {
 
             self.add_token(&merged_token);
 
-            let mut new_word_frequencies: HashMap<Vec<String>, usize> =
-                HashMap::new();
+            let mut new_word_frequencies: HashMap<Vec<String>, usize> = HashMap::new();
 
             for (symbols, frequency) in &word_frequencies {
-                let merged = Self::merge_pair(
-                    symbols,
-                    &best_pair.0,
-                    &best_pair.1,
-                );
+                let merged = Self::merge_pair(symbols, &best_pair.0, &best_pair.1);
 
                 *new_word_frequencies.entry(merged).or_insert(0) += *frequency;
             }
@@ -154,8 +149,7 @@ impl Tokenizer {
     fn count_pairs(
         word_frequencies: &HashMap<Vec<String>, usize>,
     ) -> HashMap<(String, String), usize> {
-        let mut pair_counts: HashMap<(String, String), usize> =
-            HashMap::new();
+        let mut pair_counts: HashMap<(String, String), usize> = HashMap::new();
 
         for (symbols, frequency) in word_frequencies {
             if symbols.len() < 2 {
@@ -163,10 +157,7 @@ impl Tokenizer {
             }
 
             for index in 0..symbols.len() - 1 {
-                let pair = (
-                    symbols[index].clone(),
-                    symbols[index + 1].clone(),
-                );
+                let pair = (symbols[index].clone(), symbols[index + 1].clone());
 
                 *pair_counts.entry(pair).or_insert(0) += *frequency;
             }
@@ -175,11 +166,7 @@ impl Tokenizer {
         pair_counts
     }
 
-    fn merge_pair(
-        symbols: &[String],
-        first: &str,
-        second: &str,
-    ) -> Vec<String> {
+    fn merge_pair(symbols: &[String], first: &str, second: &str) -> Vec<String> {
         if symbols.len() < 2 {
             return symbols.to_vec();
         }
@@ -188,15 +175,9 @@ impl Tokenizer {
         let mut index = 0;
 
         while index < symbols.len() {
-            if index + 1 < symbols.len()
-                && symbols[index] == first
-                && symbols[index + 1] == second
+            if index + 1 < symbols.len() && symbols[index] == first && symbols[index + 1] == second
             {
-                result.push(format!(
-                    "{}{}",
-                    symbols[index],
-                    symbols[index + 1]
-                ));
+                result.push(format!("{}{}", symbols[index], symbols[index + 1]));
 
                 index += 2;
             } else {
@@ -212,11 +193,7 @@ impl Tokenizer {
         let mut symbols = Self::word_to_symbols(word);
 
         for (first, second) in &self.merges {
-            symbols = Self::merge_pair(
-                &symbols,
-                first,
-                second,
-            );
+            symbols = Self::merge_pair(&symbols, first, second);
         }
 
         symbols
@@ -234,11 +211,7 @@ impl Tokenizer {
             let symbols = self.apply_merges(word);
 
             for symbol in symbols {
-                let id = self
-                    .vocab
-                    .get(&symbol)
-                    .copied()
-                    .unwrap_or(unk_id);
+                let id = self.vocab.get(&symbol).copied().unwrap_or(unk_id);
 
                 ids.push(id);
             }
@@ -329,38 +302,27 @@ impl Tokenizer {
     }
 
     pub fn id_to_token(&self, id: usize) -> Option<&str> {
-        self.id_to_token
-            .get(id)
-            .map(|token| token.as_str())
+        self.id_to_token.get(id).map(|token| token.as_str())
     }
 
     pub fn pad_id(&self) -> usize {
-        self.token_to_id(PAD_TOKEN)
-            .expect("PAD token is missing")
+        self.token_to_id(PAD_TOKEN).expect("PAD token is missing")
     }
 
     pub fn unk_id(&self) -> usize {
-        self.token_to_id(UNK_TOKEN)
-            .expect("UNK token is missing")
+        self.token_to_id(UNK_TOKEN).expect("UNK token is missing")
     }
 
     pub fn bos_id(&self) -> usize {
-        self.token_to_id(BOS_TOKEN)
-            .expect("BOS token is missing")
+        self.token_to_id(BOS_TOKEN).expect("BOS token is missing")
     }
 
     pub fn eos_id(&self) -> usize {
-        self.token_to_id(EOS_TOKEN)
-            .expect("EOS token is missing")
+        self.token_to_id(EOS_TOKEN).expect("EOS token is missing")
     }
 
     pub fn special_token_ids(&self) -> (usize, usize, usize, usize) {
-        (
-            self.pad_id(),
-            self.unk_id(),
-            self.bos_id(),
-            self.eos_id(),
-        )
+        (self.pad_id(), self.unk_id(), self.bos_id(), self.eos_id())
     }
 
     pub fn vocab_size(&self) -> usize {
@@ -369,10 +331,7 @@ impl Tokenizer {
 
     pub fn validate(&self) -> Result<(), String> {
         if self.vocab.len() != self.id_to_token.len() {
-            return Err(
-                "Vocabulary and ID-to-token mapping have different lengths"
-                    .to_string(),
-            );
+            return Err("Vocabulary and ID-to-token mapping have different lengths".to_string());
         }
 
         for (id, token) in self.id_to_token.iter().enumerate() {
@@ -381,8 +340,7 @@ impl Tokenizer {
                 _ => {
                     return Err(format!(
                         "Invalid vocabulary mapping for token {:?} at ID {}",
-                        token,
-                        id
+                        token, id
                     ));
                 }
             }
@@ -402,8 +360,7 @@ impl Tokenizer {
             if !self.vocab.contains_key(&merged_token) {
                 return Err(format!(
                     "Merge {} produces missing vocabulary token {:?}",
-                    index,
-                    merged_token
+                    index, merged_token
                 ));
             }
         }
@@ -411,12 +368,8 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub fn save_json<P: AsRef<Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), Box<dyn Error>> {
-        self.validate()
-            .map_err(std::io::Error::other)?;
+    pub fn save_json<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn Error>> {
+        self.validate().map_err(std::io::Error::other)?;
 
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
@@ -426,17 +379,13 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub fn load_json<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn load_json<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
 
         let tokenizer: Self = serde_json::from_reader(reader)?;
 
-        tokenizer
-            .validate()
-            .map_err(std::io::Error::other)?;
+        tokenizer.validate().map_err(std::io::Error::other)?;
 
         Ok(tokenizer)
     }
@@ -457,12 +406,7 @@ impl Tokenizer {
         println!("========================================");
 
         for (index, (first, second)) in self.merges.iter().enumerate() {
-            println!(
-                "{:>5}: {:?} + {:?}",
-                index,
-                first,
-                second
-            );
+            println!("{:>5}: {:?} + {:?}", index, first, second);
         }
     }
 
@@ -480,12 +424,7 @@ impl Tokenizer {
         for (position, token) in tokens.iter().enumerate() {
             let id = self.token_to_id(token);
 
-            println!(
-                "{:>5}: {:?} -> ID {:?}",
-                position,
-                token,
-                id
-            );
+            println!("{:>5}: {:?} -> ID {:?}", position, token, id);
         }
 
         println!();

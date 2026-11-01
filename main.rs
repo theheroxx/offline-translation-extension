@@ -1,8 +1,8 @@
-mod FFN;
-mod Tokenizer;
-mod Embedding;
 mod Attention;
+mod Embedding;
+mod FFN;
 mod PositionalEncoding;
+mod Tokenizer;
 mod Transformer;
 
 use std::error::Error;
@@ -20,12 +20,8 @@ use burn_cuda::{Cuda, CudaDevice};
 
 use crate::Embedding::embedding::Embedding as TokenEmbedding;
 use crate::Tokenizer::batch::TranslationBatch;
-use crate::Tokenizer::dataset::{load_dataset, TranslationPair};
-use crate::Tokenizer::segmenter::{
-    BpeTokenCounter,
-    DocumentSegmenter,
-    TranslationSegment,
-};
+use crate::Tokenizer::dataset::{TranslationPair, load_dataset};
+use crate::Tokenizer::segmenter::{BpeTokenCounter, DocumentSegmenter, TranslationSegment};
 use crate::Tokenizer::tokenizer::Tokenizer as BPETokenizer;
 use crate::Transformer::transformer::Transformer as TransformerModel;
 
@@ -77,17 +73,9 @@ impl<B: BurnBackend> TranslationModel<B> {
         max_target_tokens: usize,
         device: &B::Device,
     ) -> Self {
-        let source_embedding = TokenEmbedding::new(
-            source_vocab_size,
-            embedding_dimension,
-            device,
-        );
+        let source_embedding = TokenEmbedding::new(source_vocab_size, embedding_dimension, device);
 
-        let target_embedding = TokenEmbedding::new(
-            target_vocab_size,
-            embedding_dimension,
-            device,
-        );
+        let target_embedding = TokenEmbedding::new(target_vocab_size, embedding_dimension, device);
 
         let transformer = TransformerModel::new(
             num_encoder_layers,
@@ -115,11 +103,9 @@ impl<B: BurnBackend> TranslationModel<B> {
         source_padding_mask: Tensor<B, 2, Bool>,
         target_padding_mask: Tensor<B, 2, Bool>,
     ) -> Tensor<B, 3> {
-        let source_embeddings =
-            self.source_embedding.forward(source_ids);
+        let source_embeddings = self.source_embedding.forward(source_ids);
 
-        let target_embeddings =
-            self.target_embedding.forward(target_input_ids);
+        let target_embeddings = self.target_embedding.forward(target_input_ids);
 
         self.transformer.forward(
             source_embeddings,
@@ -140,10 +126,7 @@ fn create_int_tensor<B: BurnBackend>(
         .map(|value| value as i64)
         .collect::<Vec<_>>();
 
-    Tensor::<B, 2, Int>::from_data(
-        TensorData::new(data, Shape::new(shape)),
-        device,
-    )
+    Tensor::<B, 2, Int>::from_data(TensorData::new(data, Shape::new(shape)), device)
 }
 
 fn batch_tensors<B: BurnBackend>(
@@ -156,11 +139,7 @@ fn batch_tensors<B: BurnBackend>(
     Tensor<B, 2, Bool>,
     Tensor<B, 2, Bool>,
 ) {
-    let source_ids = create_int_tensor(
-        batch.source_ids_flattened(),
-        batch.source_shape(),
-        device,
-    );
+    let source_ids = create_int_tensor(batch.source_ids_flattened(), batch.source_shape(), device);
 
     let target_input_ids = create_int_tensor(
         batch.target_input_ids_flattened(),
@@ -174,11 +153,9 @@ fn batch_tensors<B: BurnBackend>(
         device,
     );
 
-    let source_padding_mask =
-        source_ids.clone().equal_elem(batch.pad_id as i64);
+    let source_padding_mask = source_ids.clone().equal_elem(batch.pad_id as i64);
 
-    let target_padding_mask =
-        target_input_ids.clone().equal_elem(batch.pad_id as i64);
+    let target_padding_mask = target_input_ids.clone().equal_elem(batch.pad_id as i64);
 
     (
         source_ids,
@@ -194,14 +171,11 @@ fn translation_loss<B: BurnBackend>(
     labels: Tensor<B, 2, Int>,
     pad_id: usize,
 ) -> Tensor<B, 1> {
-    let [batch_size, sequence_length, vocab_size] =
-        logits.shape().dims::<3>();
+    let [batch_size, sequence_length, vocab_size] = logits.shape().dims::<3>();
 
-    let logits =
-        logits.reshape([batch_size * sequence_length, vocab_size]);
+    let logits = logits.reshape([batch_size * sequence_length, vocab_size]);
 
-    let labels =
-        labels.reshape([batch_size * sequence_length]);
+    let labels = labels.reshape([batch_size * sequence_length]);
 
     CrossEntropyLossConfig::new()
         .with_pad_tokens(Some(vec![pad_id]))
@@ -209,9 +183,7 @@ fn translation_loss<B: BurnBackend>(
         .forward(logits, labels)
 }
 
-fn tensor_scalar<B: BurnBackend>(
-    tensor: Tensor<B, 1>,
-) -> f64 {
+fn tensor_scalar<B: BurnBackend>(tensor: Tensor<B, 1>) -> f64 {
     tensor
         .into_data()
         .convert::<f32>()
@@ -233,20 +205,11 @@ fn create_batches(
 
     segments
         .chunks(batch_size)
-        .map(|chunk| {
-            TranslationBatch::from_segments(
-                chunk,
-                source_tokenizer,
-                target_tokenizer,
-            )
-        })
+        .map(|chunk| TranslationBatch::from_segments(chunk, source_tokenizer, target_tokenizer))
         .collect()
 }
 
-fn shuffle<T>(
-    items: &mut [T],
-    seed: u64,
-) {
+fn shuffle<T>(items: &mut [T], seed: u64) {
     let mut state = seed.max(1);
 
     for i in (1..items.len()).rev() {
@@ -276,11 +239,9 @@ fn split_translation_pairs(
     let mut shuffled = dataset.to_vec();
     shuffle(&mut shuffled, 0xA51C_92D7);
 
-    let validation_size =
-        ((shuffled.len() as f32) * validation_ratio).round() as usize;
+    let validation_size = ((shuffled.len() as f32) * validation_ratio).round() as usize;
 
-    let validation_size =
-        validation_size.clamp(1, shuffled.len() - 1);
+    let validation_size = validation_size.clamp(1, shuffled.len() - 1);
 
     let split_index = shuffled.len() - validation_size;
 
@@ -290,9 +251,7 @@ fn split_translation_pairs(
     (train, validation)
 }
 
-fn train_tokenizers(
-    training_pairs: &[TranslationPair],
-) -> (BPETokenizer, BPETokenizer) {
+fn train_tokenizers(training_pairs: &[TranslationPair]) -> (BPETokenizer, BPETokenizer) {
     let source_texts = training_pairs
         .iter()
         .map(|pair| pair.source.clone())
@@ -303,11 +262,9 @@ fn train_tokenizers(
         .map(|pair| pair.target.clone())
         .collect::<Vec<_>>();
 
-    let mut source_tokenizer =
-        BPETokenizer::new(TOKENIZER_MERGES);
+    let mut source_tokenizer = BPETokenizer::new(TOKENIZER_MERGES);
 
-    let mut target_tokenizer =
-        BPETokenizer::new(TOKENIZER_MERGES);
+    let mut target_tokenizer = BPETokenizer::new(TOKENIZER_MERGES);
 
     source_tokenizer.train(&source_texts);
     target_tokenizer.train(&target_texts);
@@ -328,10 +285,7 @@ fn segment_dataset(
     validation_pairs: &[TranslationPair],
     source_tokenizer: &BPETokenizer,
     target_tokenizer: &BPETokenizer,
-) -> Result<
-    (Vec<TranslationSegment>, Vec<TranslationSegment>),
-    String,
-> {
+) -> Result<(Vec<TranslationSegment>, Vec<TranslationSegment>), String> {
     let segmenter = DocumentSegmenter::new(
         MAX_SOURCE_TOKENS,
         MAX_TARGET_TOKENS,
@@ -339,11 +293,9 @@ fn segment_dataset(
         BpeTokenCounter::target(target_tokenizer),
     );
 
-    let training_segments =
-        segmenter.segment_dataset_checked(training_pairs)?;
+    let training_segments = segmenter.segment_dataset_checked(training_pairs)?;
 
-    let validation_segments =
-        segmenter.segment_dataset_checked(validation_pairs)?;
+    let validation_segments = segmenter.segment_dataset_checked(validation_pairs)?;
 
     Ok((training_segments, validation_segments))
 }
@@ -356,17 +308,9 @@ fn evaluate<B: BurnBackend>(
     batch_size: usize,
     device: &B::Device,
 ) -> f64 {
-    assert!(
-        !segments.is_empty(),
-        "Validation dataset cannot be empty"
-    );
+    assert!(!segments.is_empty(), "Validation dataset cannot be empty");
 
-    let batches = create_batches(
-        segments,
-        source_tokenizer,
-        target_tokenizer,
-        batch_size,
-    );
+    let batches = create_batches(segments, source_tokenizer, target_tokenizer, batch_size);
 
     let mut total_weighted_loss = 0.0;
     let mut total_tokens = 0usize;
@@ -387,11 +331,7 @@ fn evaluate<B: BurnBackend>(
             target_padding_mask,
         );
 
-        let loss = translation_loss(
-            logits,
-            target_label_ids,
-            batch.pad_id,
-        );
+        let loss = translation_loss(logits, target_label_ids, batch.pad_id);
 
         let token_count = valid_target_tokens(&batch);
 
@@ -417,9 +357,7 @@ fn save_checkpoint<B: BurnBackend>(
     model: &TranslationModel<B>,
     path: &str,
 ) -> Result<(), Box<dyn Error>> {
-    model
-        .clone()
-        .save_file(path, &CompactRecorder::new())?;
+    model.clone().save_file(path, &CompactRecorder::new())?;
 
     Ok(())
 }
@@ -461,10 +399,7 @@ fn save_training_config(
         TOKENIZER_MERGES,
     );
 
-    std::fs::write(
-        Path::new(MODEL_DIR).join("config.json"),
-        config,
-    )?;
+    std::fs::write(Path::new(MODEL_DIR).join("config.json"), config)?;
 
     Ok(())
 }
@@ -482,66 +417,34 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let dataset = load_dataset(DATA_DIR)?;
 
-    println!(
-        "Loaded {} translation pairs",
-        dataset.len()
-    );
+    println!("Loaded {} translation pairs", dataset.len());
 
     if dataset.len() < 2 {
-        return Err(
-            "At least two translation pairs are required".into()
-        );
+        return Err("At least two translation pairs are required".into());
     }
 
-    let (training_pairs, validation_pairs) =
-        split_translation_pairs(
-            &dataset,
-            VALIDATION_RATIO,
-        );
+    let (training_pairs, validation_pairs) = split_translation_pairs(&dataset, VALIDATION_RATIO);
 
-    println!(
-        "Training pairs: {}",
-        training_pairs.len()
-    );
+    println!("Training pairs: {}", training_pairs.len());
 
-    println!(
-        "Validation pairs: {}",
-        validation_pairs.len()
-    );
+    println!("Validation pairs: {}", validation_pairs.len());
 
-    let (source_tokenizer, target_tokenizer) =
-        train_tokenizers(&training_pairs);
+    let (source_tokenizer, target_tokenizer) = train_tokenizers(&training_pairs);
 
-    println!(
-        "Source vocabulary size: {}",
-        source_tokenizer.vocab_size()
-    );
+    println!("Source vocabulary size: {}", source_tokenizer.vocab_size());
 
-    println!(
-        "Target vocabulary size: {}",
-        target_tokenizer.vocab_size()
-    );
+    println!("Target vocabulary size: {}", target_tokenizer.vocab_size());
 
     std::fs::create_dir_all(MODEL_DIR)?;
     std::fs::create_dir_all(CHECKPOINT_DIR)?;
 
-    source_tokenizer.save_json(
-        Path::new(MODEL_DIR).join("source_tokenizer.json"),
-    )?;
+    source_tokenizer.save_json(Path::new(MODEL_DIR).join("source_tokenizer.json"))?;
 
-    target_tokenizer.save_json(
-        Path::new(MODEL_DIR).join("target_tokenizer.json"),
-    )?;
+    target_tokenizer.save_json(Path::new(MODEL_DIR).join("target_tokenizer.json"))?;
 
-    save_training_config(
-        source_tokenizer.vocab_size(),
-        target_tokenizer.vocab_size(),
-    )?;
+    save_training_config(source_tokenizer.vocab_size(), target_tokenizer.vocab_size())?;
 
-    let (
-        training_segments,
-        validation_segments,
-    ) = segment_dataset(
+    let (training_segments, validation_segments) = segment_dataset(
         &training_pairs,
         &validation_pairs,
         &source_tokenizer,
@@ -556,15 +459,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("Validation dataset produced no segments".into());
     }
 
-    println!(
-        "Training segments: {}",
-        training_segments.len()
-    );
+    println!("Training segments: {}", training_segments.len());
 
-    println!(
-        "Validation segments: {}",
-        validation_segments.len()
-    );
+    println!("Validation segments: {}", validation_segments.len());
 
     let model = TranslationModel::<TrainBackend>::new(
         source_tokenizer.vocab_size(),
@@ -583,10 +480,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut optimizer = AdamWConfig::new()
         .with_weight_decay(WEIGHT_DECAY)
-        .init::<
-            TrainBackend,
-            TranslationModel<TrainBackend>,
-        >();
+        .init::<TrainBackend, TranslationModel<TrainBackend>>();
 
     println!("Model initialized on CUDA");
 
@@ -595,13 +489,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for epoch in 1..=EPOCHS {
         let epoch_start = Instant::now();
 
-        let mut shuffled_segments =
-            training_segments.clone();
+        let mut shuffled_segments = training_segments.clone();
 
-        shuffle(
-            &mut shuffled_segments,
-            0x7A31_2D95 ^ epoch as u64,
-        );
+        shuffle(&mut shuffled_segments, 0x7A31_2D95 ^ epoch as u64);
 
         let train_batches = create_batches(
             &shuffled_segments,
@@ -613,19 +503,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut total_weighted_loss = 0.0;
         let mut total_tokens = 0usize;
 
-        for (batch_index, batch) in
-            train_batches.iter().enumerate()
-        {
+        for (batch_index, batch) in train_batches.iter().enumerate() {
             let (
                 source_ids,
                 target_input_ids,
                 target_label_ids,
                 source_padding_mask,
                 target_padding_mask,
-            ) = batch_tensors::<TrainBackend>(
-                batch,
-                &device,
-            );
+            ) = batch_tensors::<TrainBackend>(batch, &device);
 
             let logits = model.forward(
                 source_ids,
@@ -634,44 +519,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                 target_padding_mask,
             );
 
-            let loss = translation_loss(
-                logits,
-                target_label_ids,
-                batch.pad_id,
-            );
+            let loss = translation_loss(logits, target_label_ids, batch.pad_id);
 
-            let loss_value =
-                tensor_scalar(loss.clone());
+            let loss_value = tensor_scalar(loss.clone());
 
-            let token_count =
-                valid_target_tokens(batch);
+            let token_count = valid_target_tokens(batch);
 
             let gradients = loss.backward();
 
-            let gradients = GradientsParams::from_grads(
-                gradients,
-                &model,
-            );
+            let gradients = GradientsParams::from_grads(gradients, &model);
 
-            model = optimizer.step(
-                LEARNING_RATE,
-                model,
-                gradients,
-            );
+            model = optimizer.step(LEARNING_RATE, model, gradients);
 
-            total_weighted_loss +=
-                loss_value * token_count as f64;
+            total_weighted_loss += loss_value * token_count as f64;
 
             total_tokens += token_count;
 
             let completed_batches = batch_index + 1;
 
-            if completed_batches % 10 == 0
-                || completed_batches == train_batches.len()
-            {
-                let average_loss =
-                    total_weighted_loss
-                    / total_tokens.max(1) as f64;
+            if completed_batches % 10 == 0 || completed_batches == train_batches.len() {
+                let average_loss = total_weighted_loss / total_tokens.max(1) as f64;
 
                 println!(
                     "Epoch {}/{} | Batch {}/{} | Loss {:.6}",
@@ -685,13 +552,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         if total_tokens == 0 {
-            return Err(
-                "Training dataset contains no valid target tokens".into()
-            );
+            return Err("Training dataset contains no valid target tokens".into());
         }
 
-        let train_loss =
-            total_weighted_loss / total_tokens as f64;
+        let train_loss = total_weighted_loss / total_tokens as f64;
 
         let validation_loss = evaluate(
             &model,
@@ -702,21 +566,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             &device,
         );
 
-        save_checkpoint(
-            &model,
-            &format!("{}/latest", CHECKPOINT_DIR),
-        )?;
+        save_checkpoint(&model, &format!("{}/latest", CHECKPOINT_DIR))?;
 
-        let is_best =
-            validation_loss < best_validation_loss;
+        let is_best = validation_loss < best_validation_loss;
 
         if is_best {
             best_validation_loss = validation_loss;
 
-            save_checkpoint(
-                &model,
-                &format!("{}/best", CHECKPOINT_DIR),
-            )?;
+            save_checkpoint(&model, &format!("{}/best", CHECKPOINT_DIR))?;
         }
 
         println!(
@@ -736,15 +593,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Training complete");
 
-    println!(
-        "Best validation loss: {:.6}",
-        best_validation_loss
-    );
+    println!("Best validation loss: {:.6}", best_validation_loss);
 
-    println!(
-        "Best checkpoint: {}/best",
-        CHECKPOINT_DIR
-    );
+    println!("Best checkpoint: {}/best", CHECKPOINT_DIR);
 
     Ok(())
 }

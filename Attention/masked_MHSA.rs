@@ -1,4 +1,3 @@
-
 use burn::module::Module;
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
@@ -50,24 +49,15 @@ impl<B: Backend> MaskedMHSA<B> {
             head_dimension
         );
 
-        let w_q =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_q = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_k =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_k = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_v =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_v = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_o =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_o = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let rope = PositionalEncoding::new(
-            head_dimension,
-            max_sequence_length,
-            10_000.0,
-            device,
-        );
+        let rope = PositionalEncoding::new(head_dimension, max_sequence_length, 10_000.0, device);
 
         Self {
             w_q,
@@ -80,14 +70,7 @@ impl<B: Backend> MaskedMHSA<B> {
         }
     }
 
-    fn project_qkv(
-        &self,
-        input: Tensor<B, 3>,
-    ) -> (
-        Tensor<B, 3>,
-        Tensor<B, 3>,
-        Tensor<B, 3>,
-    ) {
+    fn project_qkv(&self, input: Tensor<B, 3>) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
         let q = self.w_q.forward(input.clone());
         let k = self.w_k.forward(input.clone());
         let v = self.w_v.forward(input);
@@ -95,48 +78,26 @@ impl<B: Backend> MaskedMHSA<B> {
         (q, k, v)
     }
 
-    fn split_heads(
-        &self,
-        tensor: Tensor<B, 3>,
-    ) -> Tensor<B, 4> {
-        let [
-            batch_size,
-            sequence_length,
-            embedding_dimension,
-        ] = tensor.shape().dims::<3>();
+    fn split_heads(&self, tensor: Tensor<B, 3>) -> Tensor<B, 4> {
+        let [batch_size, sequence_length, embedding_dimension] = tensor.shape().dims::<3>();
 
         assert_eq!(
-            embedding_dimension,
-            self.embedding_dimension,
+            embedding_dimension, self.embedding_dimension,
             "Input embedding dimension does not match MaskedMHSA embedding dimension"
         );
 
         let head_dimension = self.head_dimension();
 
         tensor
-            .reshape([
-                batch_size,
-                sequence_length,
-                self.num_heads,
-                head_dimension,
-            ])
+            .reshape([batch_size, sequence_length, self.num_heads, head_dimension])
             .swap_dims(1, 2)
     }
 
-    fn combine_heads(
-        &self,
-        tensor: Tensor<B, 4>,
-    ) -> Tensor<B, 3> {
-        let [
-            batch_size,
-            num_heads,
-            sequence_length,
-            head_dimension,
-        ] = tensor.shape().dims::<4>();
+    fn combine_heads(&self, tensor: Tensor<B, 4>) -> Tensor<B, 3> {
+        let [batch_size, num_heads, sequence_length, head_dimension] = tensor.shape().dims::<4>();
 
         assert_eq!(
-            num_heads,
-            self.num_heads,
+            num_heads, self.num_heads,
             "Number of attention heads does not match MaskedMHSA configuration"
         );
 
@@ -148,20 +109,11 @@ impl<B: Backend> MaskedMHSA<B> {
 
         tensor
             .swap_dims(1, 2)
-            .reshape([
-                batch_size,
-                sequence_length,
-                self.embedding_dimension,
-            ])
+            .reshape([batch_size, sequence_length, self.embedding_dimension])
     }
 
-    fn causal_mask(
-        &self,
-        sequence_length: usize,
-        device: &B::Device,
-    ) -> Tensor<B, 4> {
-        let mut mask_data =
-            vec![0.0_f32; sequence_length * sequence_length];
+    fn causal_mask(&self, sequence_length: usize, device: &B::Device) -> Tensor<B, 4> {
+        let mut mask_data = vec![0.0_f32; sequence_length * sequence_length];
 
         for i in 0..sequence_length {
             for j in 0..sequence_length {
@@ -171,11 +123,7 @@ impl<B: Backend> MaskedMHSA<B> {
             }
         }
 
-        Tensor::<B, 1>::from_floats(
-            mask_data.as_slice(),
-            device,
-        )
-        .reshape([
+        Tensor::<B, 1>::from_floats(mask_data.as_slice(), device).reshape([
             1,
             1,
             sequence_length,
@@ -193,69 +141,44 @@ impl<B: Backend> MaskedMHSA<B> {
     ) -> Tensor<B, 4> {
         let head_dimension = self.head_dimension();
 
-        let mut scores = q
-            .matmul(k.swap_dims(2, 3))
-            / (head_dimension as f32).sqrt();
+        let mut scores = q.matmul(k.swap_dims(2, 3)) / (head_dimension as f32).sqrt();
 
-        let [
-            score_batch_size,
-            score_num_heads,
-            query_length,
-            key_length,
-        ] = scores.shape().dims::<4>();
+        let [score_batch_size, score_num_heads, query_length, key_length] =
+            scores.shape().dims::<4>();
 
         assert_eq!(
-            query_length,
-            key_length,
+            query_length, key_length,
             "Masked self-attention requires equal query and key sequence lengths"
         );
 
-        let causal_mask = self.causal_mask(
-            query_length,
-            device,
-        );
+        let causal_mask = self.causal_mask(query_length, device);
 
         scores = scores + causal_mask;
 
         if let Some(mask) = padding_mask {
-            let [
-                mask_batch_size,
-                mask_sequence_length,
-            ] = mask.shape().dims::<2>();
+            let [mask_batch_size, mask_sequence_length] = mask.shape().dims::<2>();
 
             assert_eq!(
-                mask_batch_size,
-                score_batch_size,
+                mask_batch_size, score_batch_size,
                 "Target padding mask batch size does not match attention batch size"
             );
 
             assert_eq!(
-                mask_sequence_length,
-                key_length,
+                mask_sequence_length, key_length,
                 "Target padding mask sequence length does not match attention sequence length"
             );
 
             let mask = mask
-                .reshape([
-                    mask_batch_size,
-                    1,
-                    1,
-                    mask_sequence_length,
-                ])
+                .reshape([mask_batch_size, 1, 1, mask_sequence_length])
                 .repeat_dim(1, score_num_heads)
                 .repeat_dim(2, query_length);
 
-            let mask_value =
-                scores.clone().full_like(-1.0e9);
+            let mask_value = scores.clone().full_like(-1.0e9);
 
-            scores = scores.mask_where(
-                mask,
-                mask_value,
-            );
+            scores = scores.mask_where(mask, mask_value);
         }
 
-        let attention_weights =
-            softmax(scores, 3);
+        let attention_weights = softmax(scores, 3);
 
         attention_weights.matmul(v)
     }
@@ -267,32 +190,17 @@ impl<B: Backend> MaskedMHSA<B> {
     ) -> Tensor<B, 3> {
         let device = input.device();
 
-        let (q, k, v) =
-            self.project_qkv(input);
+        let (q, k, v) = self.project_qkv(input);
 
-        let q = self.rope.forward(
-            self.split_heads(q)
-        );
+        let q = self.rope.forward(self.split_heads(q));
 
-        let k = self.rope.forward(
-            self.split_heads(k)
-        );
+        let k = self.rope.forward(self.split_heads(k));
 
         let v = self.split_heads(v);
 
-        let attention_output =
-            self.attention(
-                q,
-                k,
-                v,
-                padding_mask,
-                &device,
-            );
+        let attention_output = self.attention(q, k, v, padding_mask, &device);
 
-        let combined =
-            self.combine_heads(
-                attention_output,
-            );
+        let combined = self.combine_heads(attention_output);
 
         self.w_o.forward(combined)
     }

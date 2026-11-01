@@ -30,29 +30,18 @@ impl<B: Backend> EncoderBlock<B> {
             "Embedding dimension must be divisible by the number of attention heads"
         );
 
-        let norm1 =
-            LayerNormConfig::new(embedding_dimension)
-                .init(device);
+        let norm1 = LayerNormConfig::new(embedding_dimension).init(device);
 
-        let attention =
-            MHSA::new(
-                embedding_dimension,
-                num_heads,
-                max_sequence_length,
-                device,
-            );
+        let attention = MHSA::new(embedding_dimension, num_heads, max_sequence_length, device);
 
-        let norm2 =
-            LayerNormConfig::new(embedding_dimension)
-                .init(device);
+        let norm2 = LayerNormConfig::new(embedding_dimension).init(device);
 
-        let ffn =
-            FFN::new(
-                embedding_dimension,
-                ffn_hidden_dimension,
-                embedding_dimension,
-                device,
-            );
+        let ffn = FFN::new(
+            embedding_dimension,
+            ffn_hidden_dimension,
+            embedding_dimension,
+            device,
+        );
 
         Self {
             norm1,
@@ -67,23 +56,15 @@ impl<B: Backend> EncoderBlock<B> {
         input: Tensor<B, 3>,
         source_padding_mask: Option<Tensor<B, 2, Bool>>,
     ) -> Tensor<B, 3> {
-        let attention_input =
-            self.norm1.forward(input.clone());
+        let attention_input = self.norm1.forward(input.clone());
 
-        let attention_output =
-            self.attention.forward(
-                attention_input,
-                source_padding_mask,
-            );
+        let attention_output = self.attention.forward(attention_input, source_padding_mask);
 
-        let x =
-            input + attention_output;
+        let x = input + attention_output;
 
-        let ffn_input =
-            self.norm2.forward(x.clone());
+        let ffn_input = self.norm2.forward(x.clone());
 
-        let ffn_output =
-            self.ffn.forward(ffn_input);
+        let ffn_output = self.ffn.forward(ffn_input);
 
         x + ffn_output
     }

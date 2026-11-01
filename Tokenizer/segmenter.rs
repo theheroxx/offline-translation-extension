@@ -41,12 +41,8 @@ impl<'a> BpeTokenCounter<'a> {
 impl TokenCounter for BpeTokenCounter<'_> {
     fn count(&self, text: &str) -> usize {
         match self.sequence_type {
-            TokenSequenceType::Source => {
-                self.tokenizer.count_source_tokens(text)
-            }
-            TokenSequenceType::Target => {
-                self.tokenizer.count_target_tokens(text)
-            }
+            TokenSequenceType::Source => self.tokenizer.count_source_tokens(text),
+            TokenSequenceType::Target => self.tokenizer.count_target_tokens(text),
         }
     }
 }
@@ -99,10 +95,7 @@ where
         }
     }
 
-    pub fn segment_pair(
-        &self,
-        pair: &TranslationPair,
-    ) -> Vec<TranslationSegment> {
+    pub fn segment_pair(&self, pair: &TranslationPair) -> Vec<TranslationSegment> {
         self.segment_pair_checked(pair)
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -121,9 +114,7 @@ where
         let source_tokens = self.source_token_counter.count(source);
         let target_tokens = self.target_token_counter.count(target);
 
-        if source_tokens <= self.max_source_tokens
-            && target_tokens <= self.max_target_tokens
-        {
+        if source_tokens <= self.max_source_tokens && target_tokens <= self.max_target_tokens {
             return Ok(vec![TranslationSegment {
                 source: source.to_string(),
                 target: target.to_string(),
@@ -145,10 +136,7 @@ where
             ));
         }
 
-        self.chunk_aligned_sentences(
-            &source_sentences,
-            &target_sentences,
-        )
+        self.chunk_aligned_sentences(&source_sentences, &target_sentences)
     }
 
     fn chunk_aligned_sentences(
@@ -165,11 +153,9 @@ where
             .zip(target_sentences.iter())
             .enumerate()
         {
-            let source_sentence_tokens =
-                self.source_token_counter.count(source_sentence);
+            let source_sentence_tokens = self.source_token_counter.count(source_sentence);
 
-            let target_sentence_tokens =
-                self.target_token_counter.count(target_sentence);
+            let target_sentence_tokens = self.target_token_counter.count(target_sentence);
 
             if source_sentence_tokens > self.max_source_tokens
                 || target_sentence_tokens > self.max_target_tokens
@@ -184,28 +170,18 @@ where
                 ));
             }
 
-            let source_candidate =
-                append_text(&source_buffer, source_sentence);
+            let source_candidate = append_text(&source_buffer, source_sentence);
 
-            let target_candidate =
-                append_text(&target_buffer, target_sentence);
+            let target_candidate = append_text(&target_buffer, target_sentence);
 
             let source_overflow =
-                self.source_token_counter.count(&source_candidate)
-                    > self.max_source_tokens;
+                self.source_token_counter.count(&source_candidate) > self.max_source_tokens;
 
             let target_overflow =
-                self.target_token_counter.count(&target_candidate)
-                    > self.max_target_tokens;
+                self.target_token_counter.count(&target_candidate) > self.max_target_tokens;
 
-            if !source_buffer.is_empty()
-                && (source_overflow || target_overflow)
-            {
-                push_segment(
-                    &source_buffer,
-                    &target_buffer,
-                    &mut segments,
-                );
+            if !source_buffer.is_empty() && (source_overflow || target_overflow) {
+                push_segment(&source_buffer, &target_buffer, &mut segments);
 
                 source_buffer = source_sentence.clone();
                 target_buffer = target_sentence.clone();
@@ -215,19 +191,12 @@ where
             }
         }
 
-        push_segment(
-            &source_buffer,
-            &target_buffer,
-            &mut segments,
-        );
+        push_segment(&source_buffer, &target_buffer, &mut segments);
 
         Ok(segments)
     }
 
-    pub fn segment_dataset(
-        &self,
-        dataset: &[TranslationPair],
-    ) -> Vec<TranslationSegment> {
+    pub fn segment_dataset(&self, dataset: &[TranslationPair]) -> Vec<TranslationSegment> {
         self.segment_dataset_checked(dataset)
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -239,15 +208,9 @@ where
         let mut segments = Vec::new();
 
         for (index, pair) in dataset.iter().enumerate() {
-            let pair_segments = self
-                .segment_pair_checked(pair)
-                .map_err(|error| {
-                    format!(
-                        "Failed to segment dataset pair {}: {}",
-                        index + 1,
-                        error
-                    )
-                })?;
+            let pair_segments = self.segment_pair_checked(pair).map_err(|error| {
+                format!("Failed to segment dataset pair {}: {}", index + 1, error)
+            })?;
 
             segments.extend(pair_segments);
         }
@@ -275,11 +238,7 @@ impl DocumentSegmenter<WhitespaceTokenCounter, WhitespaceTokenCounter> {
     }
 }
 
-fn push_segment(
-    source: &str,
-    target: &str,
-    out: &mut Vec<TranslationSegment>,
-) {
+fn push_segment(source: &str, target: &str, out: &mut Vec<TranslationSegment>) {
     let source = source.trim();
     let target = target.trim();
 
@@ -305,19 +264,13 @@ fn split_sentences(text: &str) -> Vec<String> {
 
         current.push(character);
 
-        if !matches!(
-            character,
-            '.' | '!' | '?' | '؟' | '۔' | '…'
-        ) {
+        if !matches!(character, '.' | '!' | '?' | '؟' | '۔' | '…') {
             continue;
         }
 
         let next = chars.get(i + 1).copied();
 
-        let continuation = matches!(
-            next,
-            Some('.') | Some('!') | Some('?') | Some('…')
-        );
+        let continuation = matches!(next, Some('.') | Some('!') | Some('?') | Some('…'));
 
         let decimal = character == '.'
             && i > 0
@@ -352,10 +305,7 @@ fn split_sentences(text: &str) -> Vec<String> {
     sentences
 }
 
-fn append_text(
-    current: &str,
-    next: &str,
-) -> String {
+fn append_text(current: &str, next: &str) -> String {
     if current.is_empty() {
         next.to_string()
     } else {

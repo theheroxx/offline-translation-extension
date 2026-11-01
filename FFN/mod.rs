@@ -9,23 +9,10 @@ pub mod model;
 
 pub use model::FFN;
 
-pub use input_module::{
-    Input,
-    Labels,
-    normalize_input,
-    minmax_normalize,
-};
+pub use input_module::{Input, Labels, minmax_normalize, normalize_input};
 
-pub use activations::{
-    relu,
-    apply_relu,
-    gelu,
-};
+pub use activations::{apply_relu, gelu, relu};
 
-pub use losses::{
-    mse_loss,
-    cross_entropy_loss,
-};
-
+pub use losses::{cross_entropy_loss, mse_loss};
 
 pub use matrix::matrix_mul;

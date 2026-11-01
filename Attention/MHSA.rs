@@ -1,4 +1,3 @@
-
 use burn::module::Module;
 use burn::nn::{Linear, LinearConfig};
 use burn::prelude::*;
@@ -49,24 +48,15 @@ impl<B: Backend> MHSA<B> {
             head_dimension
         );
 
-        let w_q =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_q = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_k =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_k = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_v =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_v = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let w_o =
-            LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
+        let w_o = LinearConfig::new(embedding_dimension, embedding_dimension).init(device);
 
-        let rope = PositionalEncoding::new(
-            head_dimension,
-            max_sequence_length,
-            10_000.0,
-            device,
-        );
+        let rope = PositionalEncoding::new(head_dimension, max_sequence_length, 10_000.0, device);
 
         Self {
             w_q,
@@ -88,34 +78,25 @@ impl<B: Backend> MHSA<B> {
     }
 
     fn split_heads(&self, tensor: Tensor<B, 3>) -> Tensor<B, 4> {
-        let [batch_size, sequence_length, embedding_dimension] =
-            tensor.shape().dims::<3>();
+        let [batch_size, sequence_length, embedding_dimension] = tensor.shape().dims::<3>();
 
         assert_eq!(
-            embedding_dimension,
-            self.embedding_dimension,
+            embedding_dimension, self.embedding_dimension,
             "Input embedding dimension does not match MHSA embedding dimension"
         );
 
         let head_dimension = self.head_dimension();
 
         tensor
-            .reshape([
-                batch_size,
-                sequence_length,
-                self.num_heads,
-                head_dimension,
-            ])
+            .reshape([batch_size, sequence_length, self.num_heads, head_dimension])
             .swap_dims(1, 2)
     }
 
     fn combine_heads(&self, tensor: Tensor<B, 4>) -> Tensor<B, 3> {
-        let [batch_size, num_heads, sequence_length, head_dimension] =
-            tensor.shape().dims::<4>();
+        let [batch_size, num_heads, sequence_length, head_dimension] = tensor.shape().dims::<4>();
 
         assert_eq!(
-            num_heads,
-            self.num_heads,
+            num_heads, self.num_heads,
             "Number of attention heads does not match MHSA configuration"
         );
 
@@ -127,11 +108,7 @@ impl<B: Backend> MHSA<B> {
 
         tensor
             .swap_dims(1, 2)
-            .reshape([
-                batch_size,
-                sequence_length,
-                self.embedding_dimension,
-            ])
+            .reshape([batch_size, sequence_length, self.embedding_dimension])
     }
 
     fn attention(
@@ -143,31 +120,25 @@ impl<B: Backend> MHSA<B> {
     ) -> Tensor<B, 4> {
         let head_dimension = self.head_dimension();
 
-        let mut scores = q
-            .matmul(k.swap_dims(2, 3))
-            / (head_dimension as f32).sqrt();
+        let mut scores = q.matmul(k.swap_dims(2, 3)) / (head_dimension as f32).sqrt();
 
         if let Some(mask) = padding_mask {
             let [batch_size, sequence_length] = mask.shape().dims::<2>();
 
-            let [score_batch, score_heads, query_length, key_length] =
-                scores.shape().dims::<4>();
+            let [score_batch, score_heads, query_length, key_length] = scores.shape().dims::<4>();
 
             assert_eq!(
-                batch_size,
-                score_batch,
+                batch_size, score_batch,
                 "Padding mask batch size does not match attention scores"
             );
 
             assert_eq!(
-                sequence_length,
-                key_length,
+                sequence_length, key_length,
                 "Padding mask sequence length does not match attention keys"
             );
 
             assert_eq!(
-                query_length,
-                key_length,
+                query_length, key_length,
                 "Self-attention query and key sequence lengths must match"
             );
 

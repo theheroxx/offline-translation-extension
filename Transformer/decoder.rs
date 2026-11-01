@@ -1,4 +1,3 @@
-
 use burn::module::Module;
 use burn::nn::{LayerNorm, LayerNormConfig};
 use burn::prelude::*;
@@ -46,48 +45,33 @@ impl<B: Backend> DecoderBlock<B> {
             "Embedding dimension must be divisible by the number of attention heads"
         );
 
-        let norm1 =
-            LayerNormConfig::new(
-                embedding_dimension
-            )
-            .init(device);
+        let norm1 = LayerNormConfig::new(embedding_dimension).init(device);
 
-        let masked_attention =
-            MaskedMHSA::new(
-                embedding_dimension,
-                num_heads,
-                max_decoder_sequence_length,
-                device,
-            );
+        let masked_attention = MaskedMHSA::new(
+            embedding_dimension,
+            num_heads,
+            max_decoder_sequence_length,
+            device,
+        );
 
-        let norm2 =
-            LayerNormConfig::new(
-                embedding_dimension
-            )
-            .init(device);
+        let norm2 = LayerNormConfig::new(embedding_dimension).init(device);
 
-        let cross_attention =
-            CrossMHSA::new(
-                embedding_dimension,
-                num_heads,
-                max_decoder_sequence_length,
-                max_encoder_sequence_length,
-                device,
-            );
+        let cross_attention = CrossMHSA::new(
+            embedding_dimension,
+            num_heads,
+            max_decoder_sequence_length,
+            max_encoder_sequence_length,
+            device,
+        );
 
-        let norm3 =
-            LayerNormConfig::new(
-                embedding_dimension
-            )
-            .init(device);
+        let norm3 = LayerNormConfig::new(embedding_dimension).init(device);
 
-        let ffn =
-            FFN::new(
-                embedding_dimension,
-                ffn_hidden_dimension,
-                embedding_dimension,
-                device,
-            );
+        let ffn = FFN::new(
+            embedding_dimension,
+            ffn_hidden_dimension,
+            embedding_dimension,
+            device,
+        );
 
         Self {
             norm1,
@@ -106,56 +90,34 @@ impl<B: Backend> DecoderBlock<B> {
         target_padding_mask: Option<Tensor<B, 2, Bool>>,
         source_padding_mask: Option<Tensor<B, 2, Bool>>,
     ) -> Tensor<B, 3> {
-        let normalized_decoder =
-            self.norm1.forward(
-                decoder_input.clone()
-            );
+        let normalized_decoder = self.norm1.forward(decoder_input.clone());
 
-        let self_attention_output =
-            self.masked_attention.forward(
-                normalized_decoder,
-                target_padding_mask,
-            );
+        let self_attention_output = self
+            .masked_attention
+            .forward(normalized_decoder, target_padding_mask);
 
-        let x =
-            decoder_input +
-            self_attention_output;
+        let x = decoder_input + self_attention_output;
 
-        let normalized_x =
-            self.norm2.forward(
-                x.clone()
-            );
+        let normalized_x = self.norm2.forward(x.clone());
 
         let cross_attention_output =
-            self.cross_attention.forward(
-                normalized_x,
-                encoder_output,
-                source_padding_mask,
-            );
+            self.cross_attention
+                .forward(normalized_x, encoder_output, source_padding_mask);
 
-        let x =
-            x + cross_attention_output;
+        let x = x + cross_attention_output;
 
-        let normalized_x =
-            self.norm3.forward(
-                x.clone()
-            );
+        let normalized_x = self.norm3.forward(x.clone());
 
-        let ffn_output =
-            self.ffn.forward(
-                normalized_x
-            );
+        let ffn_output = self.ffn.forward(normalized_x);
 
         x + ffn_output
     }
 
     pub fn embedding_dimension(&self) -> usize {
-        self.masked_attention
-            .embedding_dimension()
+        self.masked_attention.embedding_dimension()
     }
 
     pub fn num_heads(&self) -> usize {
-        self.masked_attention
-            .num_heads()
+        self.masked_attention.num_heads()
     }
 }
