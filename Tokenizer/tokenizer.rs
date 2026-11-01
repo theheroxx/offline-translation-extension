@@ -1,4 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
 
 const END_OF_WORD: &str = "</w>";
 const PAD_TOKEN: &str = "<PAD>";
@@ -6,7 +11,8 @@ const UNK_TOKEN: &str = "<UNK>";
 const BOS_TOKEN: &str = "<BOS>";
 const EOS_TOKEN: &str = "<EOS>";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tokenizer {
     pub vocab: HashMap<String, usize>,
     pub id_to_token: Vec<String>,
@@ -24,7 +30,6 @@ impl Tokenizer {
         };
 
         tokenizer.add_special_tokens();
-
         tokenizer
     }
 
@@ -49,12 +54,6 @@ impl Tokenizer {
     }
 
     pub fn train(&mut self, texts: &[String]) {
-        println!("========================================");
-        println!("BPE TRAINING");
-        println!("========================================");
-        println!("Training texts: {}", texts.len());
-        println!("Requested merges: {}", self.num_merges);
-
         self.vocab.clear();
         self.id_to_token.clear();
         self.merges.clear();
@@ -72,83 +71,50 @@ impl Tokenizer {
 
                 let symbols = Self::word_to_symbols(word);
 
-                *word_frequencies
-                    .entry(symbols)
-                    .or_insert(0) += 1;
+                *word_frequencies.entry(symbols).or_insert(0) += 1;
             }
         }
 
-        println!(
-            "Initial unique word representations: {}",
-            word_frequencies.len()
-        );
-
         if word_frequencies.is_empty() {
-            println!("No training data found.");
             return;
         }
 
-        let mut initial_symbols: Vec<String> = Vec::new();
+        let mut initial_symbols = Vec::new();
 
         for symbols in word_frequencies.keys() {
             for symbol in symbols {
-                if !initial_symbols.contains(symbol) {
-                    initial_symbols.push(symbol.clone());
-                }
+                initial_symbols.push(symbol.clone());
             }
         }
 
         initial_symbols.sort();
+        initial_symbols.dedup();
 
         for symbol in &initial_symbols {
             self.add_token(symbol);
         }
 
-        for merge_number in 0..self.num_merges {
+        for _ in 0..self.num_merges {
             let pair_counts = Self::count_pairs(&word_frequencies);
 
             if pair_counts.is_empty() {
-                println!("No more pairs available.");
                 break;
             }
 
-            let best_pair = match pair_counts
-                .iter()
-                .max_by(|a, b| {
-                    a.1.cmp(b.1)
-                        .then_with(|| b.0.cmp(a.0))
-                })
-            {
+            let best_pair = match pair_counts.iter().max_by(|a, b| {
+                a.1.cmp(b.1).then_with(|| b.0.cmp(a.0))
+            }) {
                 Some((pair, _)) => pair.clone(),
                 None => break,
             };
 
-            let count =
-                pair_counts.get(&best_pair).copied().unwrap_or(0);
+            self.merges.push(best_pair.clone());
 
-            println!(
-                "Merge {:>4}: {:?} + {:?} -> count {}",
-                merge_number + 1,
-                best_pair.0,
-                best_pair.1,
-                count
-            );
-
-            self.merges.push((
-                best_pair.0.clone(),
-                best_pair.1.clone(),
-            ));
-
-            let merged_token = format!(
-                "{}{}",
-                best_pair.0,
-                best_pair.1
-            );
+            let merged_token = format!("{}{}", best_pair.0, best_pair.1);
 
             self.add_token(&merged_token);
 
-            let mut new_word_frequencies:
-                HashMap<Vec<String>, usize> =
+            let mut new_word_frequencies: HashMap<Vec<String>, usize> =
                 HashMap::new();
 
             for (symbols, frequency) in &word_frequencies {
@@ -158,18 +124,11 @@ impl Tokenizer {
                     &best_pair.1,
                 );
 
-                *new_word_frequencies
-                    .entry(merged)
-                    .or_insert(0) += *frequency;
+                *new_word_frequencies.entry(merged).or_insert(0) += *frequency;
             }
 
             word_frequencies = new_word_frequencies;
         }
-
-        println!();
-        println!("BPE training complete.");
-        println!("Vocabulary size: {}", self.vocab.len());
-        println!("Number of merges: {}", self.merges.len());
     }
 
     fn word_to_symbols(word: &str) -> Vec<String> {
@@ -179,16 +138,13 @@ impl Tokenizer {
             return Vec::new();
         }
 
-        let mut symbols =
-            Vec::with_capacity(chars.len());
+        let mut symbols = Vec::with_capacity(chars.len());
 
-        for (i, ch) in chars.iter().enumerate() {
-            if i == chars.len() - 1 {
-                symbols.push(
-                    format!("{}{}", ch, END_OF_WORD)
-                );
+        for (index, character) in chars.iter().enumerate() {
+            if index == chars.len() - 1 {
+                symbols.push(format!("{}{}", character, END_OF_WORD));
             } else {
-                symbols.push(ch.to_string());
+                symbols.push(character.to_string());
             }
         }
 
@@ -198,8 +154,7 @@ impl Tokenizer {
     fn count_pairs(
         word_frequencies: &HashMap<Vec<String>, usize>,
     ) -> HashMap<(String, String), usize> {
-        let mut pair_counts:
-            HashMap<(String, String), usize> =
+        let mut pair_counts: HashMap<(String, String), usize> =
             HashMap::new();
 
         for (symbols, frequency) in word_frequencies {
@@ -207,15 +162,13 @@ impl Tokenizer {
                 continue;
             }
 
-            for i in 0..symbols.len() - 1 {
+            for index in 0..symbols.len() - 1 {
                 let pair = (
-                    symbols[i].clone(),
-                    symbols[i + 1].clone(),
+                    symbols[index].clone(),
+                    symbols[index + 1].clone(),
                 );
 
-                *pair_counts
-                    .entry(pair)
-                    .or_insert(0) += *frequency;
+                *pair_counts.entry(pair).or_insert(0) += *frequency;
             }
         }
 
@@ -231,38 +184,32 @@ impl Tokenizer {
             return symbols.to_vec();
         }
 
-        let mut result =
-            Vec::with_capacity(symbols.len());
+        let mut result = Vec::with_capacity(symbols.len());
+        let mut index = 0;
 
-        let mut i = 0;
-
-        while i < symbols.len() {
-            if i + 1 < symbols.len()
-                && symbols[i] == first
-                && symbols[i + 1] == second
+        while index < symbols.len() {
+            if index + 1 < symbols.len()
+                && symbols[index] == first
+                && symbols[index + 1] == second
             {
                 result.push(format!(
                     "{}{}",
-                    symbols[i],
-                    symbols[i + 1]
+                    symbols[index],
+                    symbols[index + 1]
                 ));
 
-                i += 2;
+                index += 2;
             } else {
-                result.push(symbols[i].clone());
-                i += 1;
+                result.push(symbols[index].clone());
+                index += 1;
             }
         }
 
         result
     }
 
-    fn apply_merges(
-        &self,
-        word: &str,
-    ) -> Vec<String> {
-        let mut symbols =
-            Self::word_to_symbols(word);
+    fn apply_merges(&self, word: &str) -> Vec<String> {
+        let mut symbols = Self::word_to_symbols(word);
 
         for (first, second) in &self.merges {
             symbols = Self::merge_pair(
@@ -275,12 +222,8 @@ impl Tokenizer {
         symbols
     }
 
-    fn encode_content(
-        &self,
-        text: &str,
-    ) -> Vec<usize> {
+    fn encode_content(&self, text: &str) -> Vec<usize> {
         let mut ids = Vec::new();
-
         let unk_id = self.unk_id();
 
         for word in text.split_whitespace() {
@@ -288,15 +231,14 @@ impl Tokenizer {
                 continue;
             }
 
-            let symbols =
-                self.apply_merges(word);
+            let symbols = self.apply_merges(word);
 
             for symbol in symbols {
-                let id =
-                    self.vocab
-                        .get(&symbol)
-                        .copied()
-                        .unwrap_or(unk_id);
+                let id = self
+                    .vocab
+                    .get(&symbol)
+                    .copied()
+                    .unwrap_or(unk_id);
 
                 ids.push(id);
             }
@@ -305,134 +247,88 @@ impl Tokenizer {
         ids
     }
 
-    pub fn encode(
-        &self,
-        text: &str,
-    ) -> Vec<usize> {
-        let mut ids =
-            Vec::new();
+    pub fn encode(&self, text: &str) -> Vec<usize> {
+        let mut ids = Vec::new();
 
         ids.push(self.bos_id());
-
-        ids.extend(
-            self.encode_content(text)
-        );
-
+        ids.extend(self.encode_content(text));
         ids.push(self.eos_id());
 
         ids
     }
 
-    pub fn encode_source(
-        &self,
-        text: &str,
-    ) -> Vec<usize> {
-        let mut ids =
-            self.encode_content(text);
-
+    pub fn encode_source(&self, text: &str) -> Vec<usize> {
+        let mut ids = self.encode_content(text);
         ids.push(self.eos_id());
 
         ids
     }
 
-    pub fn encode_target_input(
-        &self,
-        text: &str,
-    ) -> Vec<usize> {
-        let mut ids =
-            Vec::new();
+    pub fn encode_target_input(&self, text: &str) -> Vec<usize> {
+        let mut ids = Vec::new();
 
         ids.push(self.bos_id());
-
-        ids.extend(
-            self.encode_content(text)
-        );
+        ids.extend(self.encode_content(text));
 
         ids
     }
 
-    pub fn encode_target_labels(
-        &self,
-        text: &str,
-    ) -> Vec<usize> {
-        let mut ids =
-            self.encode_content(text);
-
+    pub fn encode_target_labels(&self, text: &str) -> Vec<usize> {
+        let mut ids = self.encode_content(text);
         ids.push(self.eos_id());
 
         ids
     }
 
-    pub fn decode(
-        &self,
-        ids: &[usize],
-    ) -> String {
-        let mut output =
-            String::new();
+    pub fn count_source_tokens(&self, text: &str) -> usize {
+        self.encode_source(text).len()
+    }
+
+    pub fn count_target_tokens(&self, text: &str) -> usize {
+        self.encode_target_input(text).len()
+    }
+
+    pub fn decode(&self, ids: &[usize]) -> String {
+        let mut output = String::new();
 
         for &id in ids {
-            if id >= self.id_to_token.len() {
+            let Some(token) = self.id_to_token.get(id) else {
                 continue;
-            }
-
-            let token =
-                &self.id_to_token[id];
+            };
 
             match token.as_str() {
-                PAD_TOKEN |
-                BOS_TOKEN |
-                EOS_TOKEN => {}
-
-                UNK_TOKEN => {
-                    output.push('�');
-                }
-
-                token => {
-                    output.push_str(token);
-                }
+                PAD_TOKEN | BOS_TOKEN | EOS_TOKEN => {}
+                UNK_TOKEN => output.push('�'),
+                token => output.push_str(token),
             }
         }
 
         output
             .replace(END_OF_WORD, " ")
-            .trim()
-            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
-    pub fn tokenize(
-        &self,
-        text: &str,
-    ) -> Vec<String> {
-        let mut tokens =
-            Vec::new();
+    pub fn tokenize(&self, text: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
 
         for word in text.split_whitespace() {
             if word.is_empty() {
                 continue;
             }
 
-            let symbols =
-                self.apply_merges(word);
-
-            tokens.extend(symbols);
+            tokens.extend(self.apply_merges(word));
         }
 
         tokens
     }
 
-    pub fn token_to_id(
-        &self,
-        token: &str,
-    ) -> Option<usize> {
-        self.vocab
-            .get(token)
-            .copied()
+    pub fn token_to_id(&self, token: &str) -> Option<usize> {
+        self.vocab.get(token).copied()
     }
 
-    pub fn id_to_token(
-        &self,
-        id: usize,
-    ) -> Option<&str> {
+    pub fn id_to_token(&self, id: usize) -> Option<&str> {
         self.id_to_token
             .get(id)
             .map(|token| token.as_str())
@@ -458,9 +354,7 @@ impl Tokenizer {
             .expect("EOS token is missing")
     }
 
-    pub fn special_token_ids(
-        &self,
-    ) -> (usize, usize, usize, usize) {
+    pub fn special_token_ids(&self) -> (usize, usize, usize, usize) {
         (
             self.pad_id(),
             self.unk_id(),
@@ -473,63 +367,118 @@ impl Tokenizer {
         self.id_to_token.len()
     }
 
+    pub fn validate(&self) -> Result<(), String> {
+        if self.vocab.len() != self.id_to_token.len() {
+            return Err(
+                "Vocabulary and ID-to-token mapping have different lengths"
+                    .to_string(),
+            );
+        }
+
+        for (id, token) in self.id_to_token.iter().enumerate() {
+            match self.vocab.get(token) {
+                Some(&mapped_id) if mapped_id == id => {}
+                _ => {
+                    return Err(format!(
+                        "Invalid vocabulary mapping for token {:?} at ID {}",
+                        token,
+                        id
+                    ));
+                }
+            }
+        }
+
+        if self.token_to_id(PAD_TOKEN).is_none()
+            || self.token_to_id(UNK_TOKEN).is_none()
+            || self.token_to_id(BOS_TOKEN).is_none()
+            || self.token_to_id(EOS_TOKEN).is_none()
+        {
+            return Err("One or more special tokens are missing".to_string());
+        }
+
+        for (index, (first, second)) in self.merges.iter().enumerate() {
+            let merged_token = format!("{}{}", first, second);
+
+            if !self.vocab.contains_key(&merged_token) {
+                return Err(format!(
+                    "Merge {} produces missing vocabulary token {:?}",
+                    index,
+                    merged_token
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn save_json<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), Box<dyn Error>> {
+        self.validate()
+            .map_err(std::io::Error::other)?;
+
+        let file = File::create(path)?;
+        let writer = BufWriter::new(file);
+
+        serde_json::to_writer_pretty(writer, self)?;
+
+        Ok(())
+    }
+
+    pub fn load_json<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<Self, Box<dyn Error>> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+
+        let tokenizer: Self = serde_json::from_reader(reader)?;
+
+        tokenizer
+            .validate()
+            .map_err(std::io::Error::other)?;
+
+        Ok(tokenizer)
+    }
+
     pub fn print_vocab(&self) {
-        println!();
         println!("========================================");
         println!("VOCABULARY");
         println!("========================================");
 
-        for (id, token)
-            in self.id_to_token.iter().enumerate()
-        {
-            println!(
-                "{:>5} -> {:?}",
-                id,
-                token
-            );
+        for (id, token) in self.id_to_token.iter().enumerate() {
+            println!("{:>5} -> {:?}", id, token);
         }
     }
 
     pub fn print_merges(&self) {
-        println!();
         println!("========================================");
         println!("BPE MERGES");
         println!("========================================");
 
-        for (i, (first, second))
-            in self.merges.iter().enumerate()
-        {
+        for (index, (first, second)) in self.merges.iter().enumerate() {
             println!(
                 "{:>5}: {:?} + {:?}",
-                i,
+                index,
                 first,
                 second
             );
         }
     }
 
-    pub fn print_tokens(
-        &self,
-        text: &str,
-    ) {
-        println!();
+    pub fn print_tokens(&self, text: &str) {
         println!("========================================");
         println!("TOKENIZATION");
         println!("========================================");
 
         println!("Input:");
         println!("{}", text);
-
         println!();
 
-        let tokens =
-            self.tokenize(text);
+        let tokens = self.tokenize(text);
 
-        for (position, token)
-            in tokens.iter().enumerate()
-        {
-            let id =
-                self.token_to_id(token);
+        for (position, token) in tokens.iter().enumerate() {
+            let id = self.token_to_id(token);
 
             println!(
                 "{:>5}: {:?} -> ID {:?}",
@@ -540,9 +489,6 @@ impl Tokenizer {
         }
 
         println!();
-        println!(
-            "Total tokens: {}",
-            tokens.len()
-        );
+        println!("Total tokens: {}", tokens.len());
     }
 }

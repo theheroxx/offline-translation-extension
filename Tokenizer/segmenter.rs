@@ -42,10 +42,10 @@ impl TokenCounter for BpeTokenCounter<'_> {
     fn count(&self, text: &str) -> usize {
         match self.sequence_type {
             TokenSequenceType::Source => {
-                self.tokenizer.encode_source(text).len()
+                self.tokenizer.count_source_tokens(text)
             }
             TokenSequenceType::Target => {
-                self.tokenizer.encode_target_input(text).len()
+                self.tokenizer.count_target_tokens(text)
             }
         }
     }
